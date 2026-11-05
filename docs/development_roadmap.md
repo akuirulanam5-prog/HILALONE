@@ -22,9 +22,17 @@ Prinsip: **satu fase kecil → diuji → disetujui → lanjut**. Jangan membuat 
 
 **Alasan urutan:** Logika dibangun dan diuji **sebelum** GUI (GUI hanya "kulit"). Single image lebih dahulu karena lebih sederhana; multi-frame menambah risiko tertinggi (stacking), jadi dikerjakan setelah dasar stabil. Background extraction diuji lebih awal karena paling berisiko.
 
+## Catatan Perubahan Urutan
+- **GUI dasar dan image viewer dikembangkan lebih awal sebagai fondasi Fase 1** (keputusan pengguna): jendela utama, Open/Close Image, viewer, dan panel informasi gambar (PNG/JPG/BMP, TIFF bila didukung Qt). Ini hanya penampil; **tidak ada** pemrosesan citra.
+- Tahapan lain **tidak berubah**: Fase 1 (core & tipe data) sampai Fase 11 (pipeline) tetap dikerjakan sesuai tabel. **Fase 12 (GUI penuh)** tetap mencakup pemilihan profil, tombol Proses, progress, batal, preview hasil, dan peringatan; GUI dasar ini menjadi cikal bakalnya.
+- Aturan untuk viewer: konversi 8-bit dan rotasi EXIF hanya berlaku pada **preview layar**; data sumber, bit depth asli, dan orientasi asli tetap dicatat dan tidak diubah.
+
 ## Keputusan yang Sudah Dikonfirmasi
 - Stabilitas posisi = pengukuran translasi saja terhadap frame referensi, ambang awal 1 piksel, status `INDETERMINATE` bila tak andal, tanpa alignment, tanpa frame hilang tanpa catatan.
 - Mono tetap mono, RGB tetap RGB; enhancement/stretch luminance-aware; sequence tidak boleh campuran.
+- **TIFF memakai `tifffile==2025.5.10`** (versi terakhir yang kompatibel dengan Python 3.10.11). Alasan: Qt memuat TIFF sebagai gambar warna 4 kanal, tidak jujur soal kanal/bit depth, dan menolak gambar besar (batas alokasi 256 MB, mis. TIFF float32 5496×3672). `tifffile` membaca ke array NumPy dengan dtype dan nilai asli.
+- **`imagecodecs` ditunda.** Dipasang hanya bila ditemukan TIFF nyata yang tidak terbaca karena kompresi yang butuh codec tambahan (LZW, JPEG, ZSTD, dll.).
+- **FITS = prioritas berikutnya setelah TIFF reader selesai dan teruji.** Rencana dependency: `astropy==6.1.7` (kompatibel Python 3.10.11). **Belum dipasang.** Jangan memakai Astropy terbaru tanpa memeriksa kompatibilitas Python; versi dikunci dan diperiksa (`pip install --dry-run`) sebelum instalasi, dan tetap butuh persetujuan.
 
 ## Gerbang Keputusan (butuh persetujuan pengguna)
 - **Belum diputuskan:** SciPy sebagai dependency tambahan (diputuskan saat Fase 5; sebelum itu tidak dipasang).

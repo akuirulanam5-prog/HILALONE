@@ -1,0 +1,13 @@
+[project]
+name = "hilalone"
+version = "0.1.0"
+description = "HILALONE - Automated Hilal Image Processing"
+requires-python = ">=3.10"
+
+# Pengaturan pytest:
+# - pythonpath: folder "src" ditambahkan ke jalur impor, sehingga tes bisa
+#   menulis "import hilalone" tanpa memasang paket ke environment.
+# - testpaths: pytest hanya mencari tes di folder "tests".
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
