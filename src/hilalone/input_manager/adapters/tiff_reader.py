@@ -23,7 +23,10 @@ import numpy as np
 import tifffile
 from PySide6.QtGui import QImage
 
-PREVIEW_BIT_DEPTH = 8
+from hilalone.input_manager.preview_builder import (
+    PREVIEW_BIT_DEPTH,
+    array_to_preview_qimage,
+)
 
 
 @dataclass(frozen=True)
@@ -69,7 +72,7 @@ def _compression_name(page: tifffile.TiffPage) -> str:
         comp = tifffile.COMPRESSION(page.compression)
         return comp.name
     except Exception:
-        return str( getattr(page, "compression", "TIDAK_DIKETAHUI") )
+        return str(getattr(page, "compression", "TIDAK_DIKETAHUI"))
 
 
 def _extract_shape_and_channels(shape: tuple[int, ...], planarconfig: int | None) -> tuple[int, int, int, bool]:
@@ -82,7 +85,6 @@ def _extract_shape_and_channels(shape: tuple[int, ...], planarconfig: int | None
         h, w = shape
         return h, w, 1, False
     if len(shape) == 3:
-        # Konfigurasi planar (2 = terpisah per kanal, mis. (C, H, W))
         if planarconfig == 2 and shape[0] in (1, 3, 4) and shape[2] not in (1, 3, 4):
             c, h, w = shape
             return h, w, c, True
@@ -141,83 +143,8 @@ def inspect_tiff_pages(path: str | Path) -> list[TiffPageSummary]:
         raise ImageReadError(f"Gagal memeriksa isi file TIFF '{path.name}': {err}") from err
 
 
-def _scale_to_uint8_for_preview(data: np.ndarray) -> np.ndarray:
-    """Membuat salinan uint8 HANYA untuk tampilan layar (preview).
-
-    Data ilmiah asli TIDAK diubah sama sekali.
-    - uint8  : dipakai langsung (salinan).
-    - uint16 : digeser 8 bit (dibagi 256) agar memetakan 0..65535 -> 0..255 secara jujur.
-    - uint32 : digeser 24 bit (dibagi 16777216) untuk memetakan rentang penuh uint32.
-    - signed integer / float : dipetakan secara linear ke 0..255 hanya untuk layar
-      agar citra tetap dapat dilihat di viewer tanpa mengubah array ilmiah.
-    """
-    dtype = data.dtype
-    if dtype == np.uint8:
-        return np.ascontiguousarray(data)
-    if dtype == np.uint16:
-        return np.ascontiguousarray((data >> 8).astype(np.uint8))
-    if dtype == np.uint32:
-        return np.ascontiguousarray((data >> 24).astype(np.uint8))
-    if dtype == np.uint64:
-        return np.ascontiguousarray((data >> 56).astype(np.uint8))
-
-    # Untuk bilangan bertanda (int8/int16/int32) atau floating-point (float16/32/64):
-    work = np.asarray(data, dtype=np.float64)
-    finite_mask = np.isfinite(work)
-    if not np.any(finite_mask):
-        return np.zeros(data.shape, dtype=np.uint8)
-
-    vmin = float(np.min(work[finite_mask]))
-    vmax = float(np.max(work[finite_mask]))
-
-    # Bila float sudah berada di dalam [0.0, 1.0], petakan langsung 0..1 -> 0..255.
-    if np.issubdtype(dtype, np.floating) and vmin >= 0.0 and vmax <= 1.0:
-        scaled = np.clip(work * 255.0, 0.0, 255.0)
-    elif vmax > vmin:
-        scaled = (work - vmin) / (vmax - vmin) * 255.0
-        scaled = np.clip(scaled, 0.0, 255.0)
-    else:
-        scaled = np.zeros_like(work)
-
-    scaled = np.where(finite_mask, scaled, 0.0)
-    return np.ascontiguousarray(scaled.astype(np.uint8))
-
-
-def _array_to_preview_qimage(data: np.ndarray) -> QImage:
-    """Mengonversi array citra (H, W) atau (H, W, C) menjadi QImage 8-bit terpisah."""
-    preview_u8 = _scale_to_uint8_for_preview(data)
-    if preview_u8.ndim == 2:
-        h, w = preview_u8.shape
-        bytes_per_line = w
-        qimg = QImage(preview_u8.data, w, h, bytes_per_line, QImage.Format.Format_Grayscale8)
-        return qimg.copy()  # .copy() agar QImage memiliki salinan memori sendiri
-
-    h, w, c = preview_u8.shape
-    if c == 3:
-        bytes_per_line = w * 3
-        qimg = QImage(preview_u8.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-        return qimg.copy()
-    if c == 4:
-        bytes_per_line = w * 4
-        qimg = QImage(preview_u8.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
-        return qimg.copy()
-
-    raise ValueError(f"Jumlah kanal tidak didukung untuk preview: {c}")
-
-
 def read_tiff(path: str | Path, page_index: int | None = None) -> TiffReadResult:
-    """Membaca berkas TIFF menggunakan tifffile secara baca-saja (read-only).
-
-    Args:
-        path: Jalur berkas TIFF.
-        page_index: Indeks halaman (mulai dari 0). Wajib diisi bila berkas
-            memiliki lebih dari 1 halaman; bila ``None`` pada TIFF multi-halaman,
-            ``MultiPageTiffError`` akan dilempar.
-
-    Returns:
-        ``TiffReadResult`` berisi ``scientific_data`` (NumPy array asli) dan
-        ``preview`` (QImage 8-bit terpisah).
-    """
+    """Membaca berkas TIFF menggunakan tifffile secara baca-saja (read-only)."""
     from hilalone.input_manager.image_reader import ImageReadError, MultiPageTiffError
 
     path = Path(path)
@@ -267,7 +194,6 @@ def read_tiff(path: str | Path, page_index: int | None = None) -> TiffReadResult
 
     h, w, ch, is_planar = _extract_shape_and_channels(tuple(raw_array.shape), planar)
     if is_planar:
-        # Susun ulang sumbu (C, H, W) -> (H, W, C) tanpa mengubah dtype atau nilai piksel
         scientific = np.ascontiguousarray(np.moveaxis(raw_array, 0, -1))
     elif raw_array.ndim == 3 and raw_array.shape[2] == 1:
         scientific = raw_array[:, :, 0]
@@ -277,7 +203,6 @@ def read_tiff(path: str | Path, page_index: int | None = None) -> TiffReadResult
     if w <= 0 or h <= 0:
         raise ImageReadError(f"Gambar TIFF '{path.name}' memiliki ukuran nol.")
 
-    # Kunci array ilmiah agar tidak dapat diubah secara tidak sengaja di memori.
     scientific.flags.writeable = False
 
     dtype = scientific.dtype
@@ -285,7 +210,7 @@ def read_tiff(path: str | Path, page_index: int | None = None) -> TiffReadResult
     is_float = bool(np.issubdtype(dtype, np.floating))
     has_alpha = ch == 4
 
-    preview = _array_to_preview_qimage(scientific)
+    preview = array_to_preview_qimage(scientific)
 
     return TiffReadResult(
         scientific_data=scientific,

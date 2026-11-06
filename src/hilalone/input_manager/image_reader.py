@@ -3,10 +3,10 @@
 Modul ini menghasilkan TIGA komponen yang dipisahkan dengan jelas:
   * ``ImageInfo``       : fakta tentang berkas ASLI (ukuran tersimpan, bit depth
                           asli, dtype, jumlah kanal, orientasi EXIF asli, serta
-                          informasi halaman bila multi-page TIFF).
+                          informasi halaman TIFF atau HDU & header FITS).
   * ``scientific_data`` : array NumPy asli tanpa perubahan nilai piksel atau
-                          normalisasi permanen (diisi oleh adapter ilmiah seperti
-                          ``tiff_reader``).
+                          normalisasi permanen (diisi oleh adapter ilmiah
+                          ``tiff_reader`` dan ``fits_reader``).
   * ``preview``         : salinan ``QImage`` 8-bit di memori untuk TAMPILAN LAYAR
                           saja. Preview bukan data ilmiah.
 
@@ -23,6 +23,7 @@ import numpy as np
 from PySide6.QtGui import QImage, QImageIOHandler, QImageReader
 
 if TYPE_CHECKING:
+    from hilalone.input_manager.adapters.fits_reader import FitsHeaderInfo, FitsHduSummary
     from hilalone.input_manager.adapters.tiff_reader import TiffPageSummary
 
 # Ekstensi yang ditangani melalui QImageReader (Qt).
@@ -32,8 +33,9 @@ _QT_EXTENSIONS_BY_FORMAT: dict[str, tuple[str, ...]] = {
     "jpg": ("jpg", "jpeg"),
     "bmp": ("bmp",),
 }
-# Ekstensi TIFF kini selalu didukung melalui adapter ilmiah tifffile.
+# Ekstensi ilmiah yang ditangani melalui adapter khusus.
 _TIFF_EXTENSIONS = ("tif", "tiff")
+_FITS_EXTENSIONS = ("fit", "fits", "fts")
 
 # Bit depth preview layar (selalu 8-bit pada v0.1).
 PREVIEW_BIT_DEPTH = 8
@@ -41,7 +43,6 @@ PREVIEW_BIT_DEPTH = 8
 _F = QImage.Format
 
 # Tabel format Qt -> (jumlah kanal, ada alpha, bit per kanal, bilangan riil/float).
-# None berarti "tidak dapat dipastikan" (tidak ditebak agar tetap jujur).
 _FORMAT_TABLE: dict[QImage.Format, tuple[int | None, bool, int | None, bool]] = {
     _F.Format_Mono: (1, False, 1, False),
     _F.Format_MonoLSB: (1, False, 1, False),
@@ -75,7 +76,6 @@ _FORMAT_TABLE: dict[QImage.Format, tuple[int | None, bool, int | None, bool]] = 
 
 _T = QImageIOHandler.Transformation
 
-# Nama orientasi untuk ditampilkan kepada pengguna.
 _ORIENTATION_LABELS: dict[QImageIOHandler.Transformation, str] = {
     _T.TransformationNone: "Normal (tanpa rotasi)",
     _T.TransformationMirror: "Dicerminkan horizontal",
@@ -101,33 +101,49 @@ class MultiPageTiffError(ImageReadError):
         self.pages = pages
 
 
+class MultiHduFitsError(ImageReadError):
+    """Dilempar saat berkas FITS memiliki >1 HDU gambar tetapi hdu_index belum dipilih."""
+
+    def __init__(
+        self,
+        path: Path,
+        image_hdus: tuple[FitsHduSummary, ...],
+        total_hdu_count: int,
+        message: str,
+    ) -> None:
+        super().__init__(message)
+        self.path = path
+        self.image_hdus = image_hdus
+        self.total_hdu_count = total_hdu_count
+
+
 @dataclass(frozen=True)
 class ImageInfo:
-    """Informasi berkas ASLI (tidak berubah setelah dibuat).
-
-    ``stored_width/height`` adalah ukuran yang tersimpan di berkas, sedangkan
-    ``width/height`` adalah ukuran preview setelah orientasi EXIF diterapkan
-    (keduanya sama bila tidak ada rotasi 90°/270°).
-    """
+    """Informasi berkas ASLI (tidak berubah setelah dibuat)."""
 
     path: Path
     file_name: str
-    file_format: str  # nama format hasil deteksi isi berkas, mis. "PNG", "JPEG", "TIFF"
+    file_format: str  # mis. "PNG", "JPEG", "TIFF", "FITS"
     width: int
     height: int
     stored_width: int
     stored_height: int
     channels: int | None  # 1, 3, 4, atau None bila tidak diketahui
     has_alpha: bool
-    original_bit_depth: int | None  # bit per kanal pada berkas asli
+    original_bit_depth: int | None
     original_is_float: bool
     preview_bit_depth: int
-    exif_orientation: str  # orientasi ASLI yang tercatat pada berkas
-    orientation_applied: bool  # True bila preview diputar/dicerminkan
+    exif_orientation: str
+    orientation_applied: bool
     dtype_str: str | None = None
+    stored_dtype_str: str | None = None
     page_index: int = 0
     page_count: int = 1
     compression_name: str | None = None
+    hdu_index: int = 0
+    hdu_count: int = 1
+    image_hdu_count: int = 1
+    fits_header: FitsHeaderInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -143,7 +159,8 @@ def supported_extensions() -> tuple[str, ...]:
     """Daftar ekstensi (tanpa titik) yang didukung saat ini.
 
     Format PNG/JPG/BMP diperiksa lewat ``QImageReader.supportedImageFormats()``,
-    sedangkan ``tif`` dan ``tiff`` didukung penuh lewat ``tifffile``.
+    ``tif``/``tiff`` didukung lewat ``tifffile``, dan ``fit``/``fits``/``fts``
+    didukung lewat ``astropy.io.fits``.
     """
     qt_formats = {bytes(f).decode("ascii", "ignore").lower() for f in QImageReader.supportedImageFormats()}
     extensions: list[str] = []
@@ -152,7 +169,7 @@ def supported_extensions() -> tuple[str, ...]:
             for ext in exts:
                 if ext not in extensions:
                     extensions.append(ext)
-    for ext in _TIFF_EXTENSIONS:
+    for ext in (*_TIFF_EXTENSIONS, *_FITS_EXTENSIONS):
         if ext not in extensions:
             extensions.append(ext)
     return tuple(extensions)
@@ -170,9 +187,7 @@ def _validate_path(path: Path) -> None:
     if ext in supported:
         return
     if ext in _TIFF_EXTENSIONS:
-        raise ImageReadError(
-            "Format TIFF belum dapat dibuka pada konfigurasi saat ini."
-        )
+        raise ImageReadError("Format TIFF belum dapat dibuka pada konfigurasi saat ini.")
     shown = ", ".join(e.upper() for e in supported)
     ext_text = f".{ext}" if ext else "(tanpa ekstensi)"
     raise ImageReadError(f"Format file {ext_text} belum didukung. Format yang didukung saat ini: {shown}.")
@@ -184,12 +199,7 @@ def _describe_format(fmt: QImage.Format) -> tuple[int | None, bool, int | None, 
 
 
 def _to_display_preview(image: QImage, channels: int | None, has_alpha: bool) -> QImage:
-    """Membuat salinan 8-bit untuk layar TANPA mengubah jenis citra.
-
-    Mono tetap mono (Grayscale8), warna tetap warna (RGB). Tidak ada
-    konversi RGB -> grayscale. Hanya presisi bit yang diturunkan ke 8-bit,
-    dan hanya pada salinan preview ini.
-    """
+    """Membuat salinan 8-bit untuk layar TANPA mengubah jenis citra."""
     if channels == 1 and not has_alpha:
         target = QImage.Format.Format_Grayscale8
     elif has_alpha or image.hasAlphaChannel():
@@ -227,6 +237,7 @@ def _read_tiff_via_adapter(path: Path, page_index: int | None) -> LoadedImage:
         exif_orientation="Normal (tanpa rotasi)",
         orientation_applied=False,
         dtype_str=result.dtype_str,
+        stored_dtype_str=result.dtype_str,
         page_index=result.page_index,
         page_count=result.page_count,
         compression_name=result.compression_name,
@@ -238,17 +249,61 @@ def _read_tiff_via_adapter(path: Path, page_index: int | None) -> LoadedImage:
     )
 
 
-def read_image(path: str | Path, page_index: int | None = None) -> LoadedImage:
+def _read_fits_via_adapter(path: Path, hdu_index: int | None) -> LoadedImage:
+    """Membaca berkas FITS melalui adapter astropy.io.fits dan membungkusnya ke LoadedImage."""
+    from hilalone.input_manager.adapters.fits_reader import read_fits
+
+    result = read_fits(path, hdu_index=hdu_index)
+    name_tag = f" [{result.hdu_name}]" if result.hdu_name else ""
+    if result.total_hdu_count > 1:
+        fmt_label = f"FITS (HDU #{result.hdu_index}{name_tag} dari {result.total_hdu_count} HDU)"
+    else:
+        fmt_label = f"FITS (HDU #{result.hdu_index}{name_tag})"
+
+    info = ImageInfo(
+        path=path,
+        file_name=path.name,
+        file_format=fmt_label,
+        width=result.width,
+        height=result.height,
+        stored_width=result.stored_width,
+        stored_height=result.stored_height,
+        channels=result.channels,
+        has_alpha=result.has_alpha,
+        original_bit_depth=result.original_bit_depth,
+        original_is_float=result.original_is_float,
+        preview_bit_depth=PREVIEW_BIT_DEPTH,
+        exif_orientation="Normal (tanpa rotasi)",
+        orientation_applied=False,
+        dtype_str=result.dtype_str,
+        stored_dtype_str=result.stored_dtype_str,
+        hdu_index=result.hdu_index,
+        hdu_count=result.total_hdu_count,
+        image_hdu_count=result.image_hdu_count,
+        fits_header=result.header_info,
+    )
+    return LoadedImage(
+        info=info,
+        preview=result.preview,
+        scientific_data=result.scientific_data,
+    )
+
+
+def read_image(
+    path: str | Path,
+    page_index: int | None = None,
+    hdu_index: int | None = None,
+) -> LoadedImage:
     """Membaca gambar (mode baca saja) dan mengembalikan info asli + preview (+ scientific_data).
 
     Args:
         path: Jalur berkas gambar.
         page_index: Indeks halaman (khusus TIFF multi-halaman, berbasis 0).
-            Bila ``None`` pada TIFF multi-halaman, ``MultiPageTiffError`` dilempar
-            agar pemanggil memilih halaman secara eksplisit.
+        hdu_index: Indeks HDU (khusus FITS, berbasis 0).
 
     Raises:
         MultiPageTiffError: bila berkas TIFF memiliki >1 halaman dan ``page_index`` belum dipilih.
+        MultiHduFitsError: bila berkas FITS memiliki >1 HDU gambar dan ``hdu_index`` belum dipilih.
         ImageReadError: bila berkas tidak ada, formatnya tidak didukung,
             atau isinya rusak/tidak valid.
     """
@@ -258,9 +313,9 @@ def read_image(path: str | Path, page_index: int | None = None) -> LoadedImage:
     ext = path.suffix.lower().lstrip(".")
     if ext in _TIFF_EXTENSIONS:
         return _read_tiff_via_adapter(path, page_index=page_index)
+    if ext in _FITS_EXTENSIONS:
+        return _read_fits_via_adapter(path, hdu_index=hdu_index)
 
-    # Pembaca #1 (metadata): TANPA rotasi otomatis, supaya fakta berkas asli
-    # (ukuran tersimpan, format piksel, orientasi EXIF) tercatat apa adanya.
     meta = QImageReader(str(path))
     meta.setAutoTransform(False)
     if not meta.canRead():
@@ -272,7 +327,6 @@ def read_image(path: str | Path, page_index: int | None = None) -> LoadedImage:
     qt_format_name = bytes(meta.format()).decode("ascii", "ignore").upper()
     channels, has_alpha, bit_depth, is_float = _describe_format(meta.imageFormat())
 
-    # Pembaca #2 (preview): rotasi EXIF diterapkan HANYA pada salinan di memori.
     reader = QImageReader(str(path))
     reader.setAutoTransform(True)
     image = reader.read()

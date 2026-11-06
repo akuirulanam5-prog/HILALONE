@@ -26,10 +26,12 @@ from PySide6.QtWidgets import (
 
 from hilalone import APP_NAME, APP_SUBTITLE
 from hilalone.gui.image_viewer import ImageViewer
+from hilalone.input_manager.adapters.fits_reader import FitsHduSummary
 from hilalone.input_manager.adapters.tiff_reader import TiffPageSummary
 from hilalone.input_manager.image_reader import (
     ImageInfo,
     ImageReadError,
+    MultiHduFitsError,
     MultiPageTiffError,
     read_image,
     supported_extensions,
@@ -47,6 +49,7 @@ _INFO_ROWS: tuple[tuple[str, str], ...] = (
     ("channels", "Kanal"),
     ("bit_depth", "Bit depth"),
     ("orientation", "Orientasi"),
+    ("fits_metadata", "Header FITS"),
 )
 
 
@@ -64,7 +67,12 @@ def format_bit_depth(info: ImageInfo) -> str:
         original = "tidak diketahui"
     else:
         suffix = " float" if info.original_is_float else ""
-        dtype_note = f" ({info.dtype_str})" if info.dtype_str else ""
+        if info.stored_dtype_str and info.dtype_str and info.stored_dtype_str != info.dtype_str:
+            dtype_note = f" ({info.dtype_str}; stored {info.stored_dtype_str})"
+        elif info.dtype_str:
+            dtype_note = f" ({info.dtype_str})"
+        else:
+            dtype_note = ""
         original = f"{info.original_bit_depth}-bit{suffix}{dtype_note}"
     return f"Original: {original} | Display Preview: {info.preview_bit_depth}-bit"
 
@@ -77,6 +85,13 @@ def format_orientation(info: ImageInfo) -> str:
         f"{info.exif_orientation} (hanya pada preview)\n"
         f"Ukuran tersimpan: {info.stored_width} × {info.stored_height} px"
     )
+
+
+def format_fits_metadata(info: ImageInfo) -> str:
+    """Teks ringkasan metadata FITS bila berkas adalah FITS, atau '-' bila bukan."""
+    if info.fits_header is None:
+        return EMPTY_VALUE
+    return info.fits_header.summary_text()
 
 
 class MainWindow(QMainWindow):
@@ -212,20 +227,60 @@ class MainWindow(QMainWindow):
                 return p.index
         return 0
 
-    def load_path(self, file_path: str | Path, page_index: int | None = None) -> bool:
+    def _ask_fits_hdu(
+        self,
+        file_name: str,
+        image_hdus: tuple[FitsHduSummary, ...],
+        total_hdu_count: int,
+    ) -> int | None:
+        """Meminta pengguna memilih HDU gambar bila FITS memiliki beberapa HDU gambar."""
+        items = [h.label() for h in image_hdus]
+        chosen, ok = QInputDialog.getItem(
+            self,
+            "Pilih HDU FITS",
+            (
+                f"File FITS '{file_name}' memiliki {len(image_hdus)} HDU berisi gambar "
+                f"(dari total {total_hdu_count} HDU).\n"
+                "Pilih HDU yang ingin ditampilkan:"
+            ),
+            items,
+            0,
+            False,
+        )
+        if not ok or not chosen:
+            return None
+        for h in image_hdus:
+            if h.label() == chosen:
+                return h.index
+        return image_hdus[0].index
+
+    def load_path(
+        self,
+        file_path: str | Path,
+        page_index: int | None = None,
+        hdu_index: int | None = None,
+    ) -> bool:
         """Memuat gambar dari jalur tertentu. True bila berhasil.
 
-        Bila berkas berupa TIFF multi-halaman dan ``page_index`` belum diberikan,
-        pengguna diminta memilih halaman terlebih dahulu (tidak diam-diam
-        mengambil halaman pertama).
+        Bila berkas berupa TIFF multi-halaman atau FITS dengan beberapa HDU gambar,
+        pengguna diminta memilih halaman/HDU terlebih dahulu.
         """
         try:
-            loaded = read_image(file_path, page_index=page_index)
+            loaded = read_image(file_path, page_index=page_index, hdu_index=hdu_index)
         except MultiPageTiffError as multi_err:
             selected_page = self._ask_tiff_page(multi_err.path.name, multi_err.pages)
             if selected_page is None:
                 return False
             return self.load_path(file_path, page_index=selected_page)
+        except MultiHduFitsError as fits_err:
+            selected_hdu = self._ask_fits_hdu(
+                fits_err.path.name,
+                fits_err.image_hdus,
+                fits_err.total_hdu_count,
+            )
+            if selected_hdu is None:
+                return False
+            return self.load_path(file_path, hdu_index=selected_hdu)
         except ImageReadError as error:
             self._show_error(str(error))
             return False
@@ -258,6 +313,7 @@ class MainWindow(QMainWindow):
             "channels": format_channels(info),
             "bit_depth": format_bit_depth(info),
             "orientation": format_orientation(info),
+            "fits_metadata": format_fits_metadata(info),
         }
         for key, text in values.items():
             self._info_values[key].setText(text)
