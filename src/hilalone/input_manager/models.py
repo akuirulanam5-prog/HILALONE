@@ -49,6 +49,7 @@ class InputMode(str, Enum):
     SINGLE = "SINGLE"
     MULTI = "MULTI"
     VIDEO = "VIDEO"
+    SER = "SER"
 
 
 @dataclass(frozen=True)

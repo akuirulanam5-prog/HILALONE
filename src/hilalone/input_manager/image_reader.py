@@ -29,6 +29,7 @@ from PySide6.QtGui import QImage, QImageIOHandler, QImageReader
 if TYPE_CHECKING:
     from hilalone.input_manager.adapters.fits_reader import FitsHeaderInfo, FitsHduSummary
     from hilalone.input_manager.adapters.raw_reader import RawMetadataInfo
+    from hilalone.input_manager.adapters.ser_reader import SerMetadataInfo
     from hilalone.input_manager.adapters.tiff_reader import TiffPageSummary
     from hilalone.input_manager.adapters.video_reader import VideoMetadataInfo
 
@@ -160,8 +161,11 @@ class ImageInfo:
     fits_header: FitsHeaderInfo | None = None
     raw_metadata: RawMetadataInfo | None = None
     video_metadata: VideoMetadataInfo | None = None
+    ser_metadata: SerMetadataInfo | None = None
     frame_pts: int | None = None
     frame_timestamp_sec: float | None = None
+    frame_timestamp_ticks: int | None = None
+    frame_timestamp_utc_str: str | None = None
     decoded_pix_fmt: str | None = None
 
 
@@ -176,6 +180,7 @@ class LoadedImage:
     raw_image_full: np.ndarray | None = None
     demosaiced_rgb: np.ndarray | None = None
     native_video_planes: tuple[np.ndarray, ...] | None = None
+    raw_stored_data: np.ndarray | None = None
 
 
 def supported_extensions() -> tuple[str, ...]:

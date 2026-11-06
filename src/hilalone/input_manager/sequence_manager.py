@@ -41,6 +41,7 @@ from hilalone.input_manager.models import (
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from hilalone.input_manager.adapters.ser_reader import SerSession
     from hilalone.input_manager.adapters.video_reader import VideoSession
 
 SORT_NATURAL_LABEL = "Natural filename sorting"
@@ -109,6 +110,7 @@ class SequenceManager:
         self._report: SequenceCompatibilityReport = self._empty_report()
         self._current_index: int = -1
         self._video_session: VideoSession | None = None
+        self._ser_session: SerSession | None = None
 
     # ---------------------------------------------------------------- properti
     @property
@@ -120,9 +122,13 @@ class SequenceManager:
         return self._video_session
 
     @property
+    def ser_session(self) -> SerSession | None:
+        return self._ser_session
+
+    @property
     def stacking_required(self) -> bool:
-        """False untuk Single Image (atau kosong), True untuk Multiple Images dan Video."""
-        return self._mode in (InputMode.MULTI, InputMode.VIDEO)
+        """False untuk Single Image (atau kosong), True untuk Multiple Images, Video, dan SER."""
+        return self._mode in (InputMode.MULTI, InputMode.VIDEO, InputMode.SER)
 
     @property
     def sorting_method(self) -> str:
@@ -152,6 +158,12 @@ class SequenceManager:
             except Exception:
                 pass
             self._video_session = None
+        if self._ser_session is not None:
+            try:
+                self._ser_session.close()
+            except Exception:
+                pass
+            self._ser_session = None
 
     def clear(self) -> None:
         """Mengosongkan seluruh sesi sequence dan menutup container video aktif."""
@@ -366,6 +378,117 @@ class SequenceManager:
         self._current_index = 0 if entries else -1
         return self._report
 
+    def open_ser_file(
+        self,
+        path: str | Path,
+        max_cache_size: int = 8,
+        endianness_policy: str = "siril_default",
+    ) -> SequenceCompatibilityReport:
+        """Membuka berkas video astronomi SER (.ser) secara *lazy* sebagai sequence multi-frame.
+
+        - ``stacking_required`` bernilai ``True``.
+        - Hanya header 178 byte dan trailer timestamp opsional yang dibaca di awal;
+          piksel setiap frame baru dibaca secara *on-demand* berdasarkan byte offset
+          ketika ``load_frame(index)`` dipanggil.
+        """
+        from hilalone.input_manager.adapters.ser_reader import (
+            SER_EXTENSIONS,
+            SerSession,
+        )
+
+        ser_path = Path(path)
+        if not ser_path.exists():
+            raise ImageReadError(f"File SER tidak ditemukan: {ser_path}")
+        if not ser_path.is_file():
+            raise ImageReadError(f"Jalur yang dipilih bukan sebuah file SER: {ser_path}")
+
+        ext = ser_path.suffix.lower().lstrip(".")
+        if ext not in SER_EXTENSIONS:
+            raise ImageReadError(
+                f"Format file '.{ext}' bukan berkas SER (.SER) yang didukung."
+            )
+
+        session = SerSession(
+            ser_path,
+            max_cache_size=max_cache_size,
+            endianness_policy=endianness_policy,
+        )
+        self._close_active_video_session()
+        self._ser_session = session
+
+        meta = session.metadata
+        channels = 1 if meta.num_planes == 1 else 3
+        fmt_label = f"SER ({meta.color_format_name}, {meta.pixel_depth_per_plane}-bit)"
+
+        entries: list[SequenceFrameEntry] = []
+        for ts_entry in session.frame_timestamps:
+            if ts_entry.timestamp_utc_str is not None and ts_entry.relative_sec is not None:
+                ts_str = f"{ts_entry.timestamp_utc_str} (+{ts_entry.relative_sec:.4f} s)"
+            elif ts_entry.timestamp_utc_str is not None:
+                ts_str = ts_entry.timestamp_utc_str
+            else:
+                ts_str = None
+
+            frame_info = ImageInfo(
+                path=ser_path,
+                file_name=f"{ser_path.name} [Frame #{ts_entry.frame_index + 1}]",
+                file_format=fmt_label,
+                width=meta.width,
+                height=meta.height,
+                stored_width=meta.width,
+                stored_height=meta.height,
+                channels=channels,
+                has_alpha=False,
+                original_bit_depth=meta.pixel_depth_per_plane,
+                original_is_float=False,
+                preview_bit_depth=PREVIEW_BIT_DEPTH,
+                exif_orientation="Normal (tanpa rotasi)",
+                orientation_applied=False,
+                dtype_str=meta.storage_dtype_str,
+                stored_dtype_str=f"{meta.storage_dtype_str} ({meta.color_format_name})",
+                ser_metadata=meta,
+                frame_timestamp_sec=ts_entry.relative_sec,
+                frame_timestamp_ticks=ts_entry.ticks if ts_entry.ticks > 0 else None,
+                frame_timestamp_utc_str=ts_entry.timestamp_utc_str,
+            )
+            entries.append(
+                SequenceFrameEntry(
+                    frame_index=ts_entry.frame_index,
+                    source_path=ser_path,
+                    info=frame_info,
+                    status=FrameStatus.COMPATIBLE,
+                    is_pixel_loaded=False,
+                    timestamp_str=ts_str,
+                    issues=(),
+                    notes=(),
+                )
+            )
+
+        self._mode = InputMode.SER
+        self._entries = entries
+        if meta.has_timestamp_trailer and meta.trailer_valid_count == meta.frame_count:
+            self._sorting_method = "Urutan indeks rekaman SER (dengan timestamp trailer 100-ns)"
+        elif meta.has_timestamp_trailer:
+            self._sorting_method = (
+                f"Urutan indeks rekaman SER (trailer parsial: {meta.trailer_valid_count}/{meta.frame_count} frame)"
+            )
+        else:
+            self._sorting_method = "Urutan indeks rekaman SER (tanpa trailer timestamp)"
+
+        self._report = SequenceCompatibilityReport(
+            is_ready_for_stacking=len(entries) >= 2,
+            reference_frame_index=0 if entries else None,
+            total_files=len(entries),
+            compatible_count=len(entries),
+            incompatible_count=0,
+            error_count=0,
+            mixed_bit_depth=False,
+            warnings=meta.warnings,
+            notes=(meta.honesty_note,),
+        )
+        self._current_index = 0 if entries else -1
+        return self._report
+
     def load_frame(self, index: int) -> LoadedImage:
         """Memuat piksel penuh (`scientific_data` + `preview`) untuk satu frame (*Lazy Load*).
 
@@ -440,6 +563,66 @@ class SequenceManager:
                 preview=vframe.preview,
                 scientific_data=vframe.scientific_data,
                 native_video_planes=vframe.native_planes,
+            )
+
+        if self._ser_session is not None and self._mode == InputMode.SER:
+            try:
+                sframe = self._ser_session.read_frame(index)
+            except ImageReadError as err:
+                failed_entry = replace(
+                    entry,
+                    status=FrameStatus.ERROR,
+                    is_pixel_loaded=False,
+                    issues=(str(err),),
+                )
+                self._entries[index] = failed_entry
+                self._recompute_video_report_counts()
+                raise
+
+            meta = self._ser_session.metadata
+            fmt_label = f"SER ({meta.color_format_name}, {meta.pixel_depth_per_plane}-bit)"
+            if sframe.timestamp_utc_str is not None and sframe.timestamp_relative_sec is not None:
+                ts_str = f"{sframe.timestamp_utc_str} (+{sframe.timestamp_relative_sec:.4f} s)"
+            elif sframe.timestamp_utc_str is not None:
+                ts_str = sframe.timestamp_utc_str
+            else:
+                ts_str = None
+
+            updated_info = ImageInfo(
+                path=entry.source_path,
+                file_name=entry.source_path.name,
+                file_format=fmt_label,
+                width=sframe.width,
+                height=sframe.height,
+                stored_width=sframe.width,
+                stored_height=sframe.height,
+                channels=sframe.channels,
+                has_alpha=False,
+                original_bit_depth=sframe.bit_depth,
+                original_is_float=False,
+                preview_bit_depth=PREVIEW_BIT_DEPTH,
+                exif_orientation="Normal (tanpa rotasi)",
+                orientation_applied=False,
+                dtype_str=sframe.dtype_str,
+                stored_dtype_str=sframe.stored_dtype_str,
+                ser_metadata=meta,
+                frame_timestamp_sec=sframe.timestamp_relative_sec,
+                frame_timestamp_ticks=sframe.timestamp_ticks,
+                frame_timestamp_utc_str=sframe.timestamp_utc_str,
+            )
+            self._entries[index] = replace(
+                entry,
+                info=updated_info,
+                is_pixel_loaded=True,
+                timestamp_str=ts_str,
+            )
+            self._current_index = index
+            return LoadedImage(
+                info=updated_info,
+                preview=sframe.preview,
+                scientific_data=sframe.scientific_data,
+                demosaiced_rgb=sframe.demosaiced_rgb,
+                raw_stored_data=sframe.raw_stored_data,
             )
 
         loaded = read_image(entry.source_path)

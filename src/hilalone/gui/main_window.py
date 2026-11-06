@@ -36,6 +36,10 @@ from hilalone.input_manager.adapters.fits_reader import (
     FitsHduSummary,
 )
 from hilalone.input_manager.adapters.raw_reader import UNAVAILABLE_TEXT as RAW_UNAVAILABLE
+from hilalone.input_manager.adapters.ser_reader import (
+    SER_EXTENSIONS,
+    UNAVAILABLE_TEXT as SER_UNAVAILABLE,
+)
 from hilalone.input_manager.adapters.tiff_reader import TiffPageSummary
 from hilalone.input_manager.adapters.video_reader import (
     UNAVAILABLE_TEXT as VIDEO_UNAVAILABLE,
@@ -154,6 +158,26 @@ _SECTION_VIDEO_ROWS: tuple[tuple[str, str], ...] = (
     ("video_honesty_note", "Catatan video"),
 )
 
+# Kelompok D (SER): Informasi SER
+_SECTION_SER_ROWS: tuple[tuple[str, str], ...] = (
+    ("ser_file_id", "FileID & LuID"),
+    ("ser_file_size", "Ukuran file"),
+    ("ser_color_id", "ColorID"),
+    ("ser_cfa_pattern", "Pola CFA"),
+    ("ser_resolution", "Resolusi"),
+    ("ser_pixel_depth", "Pixel depth"),
+    ("ser_endianness", "Byte order"),
+    ("ser_frame_count", "Jumlah frame"),
+    ("ser_observer", "Observer"),
+    ("ser_instrument", "Instrument"),
+    ("ser_telescope", "Telescope"),
+    ("ser_datetime_local", "DateTime (Lokal)"),
+    ("ser_datetime_utc", "DateTime (UTC)"),
+    ("ser_trailer_status", "Trailer timestamp"),
+    ("ser_frame_timestamp", "Timestamp frame"),
+    ("ser_honesty_note", "Catatan SER"),
+)
+
 # Baris sequence yang hanya relevan pada mode Multiple Images
 _MULTI_ONLY_KEYS: frozenset[str] = frozenset(
     {
@@ -171,7 +195,7 @@ _MULTI_ONLY_KEYS: frozenset[str] = frozenset(
 
 
 def format_metadata_label(info: ImageInfo | None) -> str:
-    """Label bagian metadata yang menyesuaikan format berkas (Informasi FITS, Metadata RAW, Informasi Video, atau generik)."""
+    """Label bagian metadata yang menyesuaikan format berkas (Informasi FITS, Metadata RAW, Informasi Video, Informasi SER, atau generik)."""
     if info is not None:
         if info.raw_metadata is not None:
             return "Metadata RAW"
@@ -179,6 +203,8 @@ def format_metadata_label(info: ImageInfo | None) -> str:
             return "Informasi FITS"
         if info.video_metadata is not None:
             return "Informasi Video"
+        if info.ser_metadata is not None:
+            return "Informasi SER"
     return "Metadata sumber"
 
 
@@ -187,6 +213,11 @@ def format_channels(info: ImageInfo) -> str:
     if info.raw_metadata is not None and info.raw_metadata.is_cfa_mosaic:
         return (
             f"1 (Sensor CFA Mosaic: {info.raw_metadata.cfa_pattern_str}) | "
+            "Preview: 3 (RGB Demosaiced)"
+        )
+    if info.ser_metadata is not None and info.ser_metadata.is_cfa_mosaic:
+        return (
+            f"1 (Sensor CFA Mosaic: {info.ser_metadata.cfa_pattern_str}) | "
             "Preview: 3 (RGB Demosaiced)"
         )
     if info.channels is None:
@@ -198,6 +229,8 @@ def format_channels(info: ImageInfo) -> str:
 def format_preview_channels_and_depth(info: ImageInfo) -> str:
     """Teks informasi kanal dan bit depth khusus untuk representasi pratinjau layar."""
     if info.raw_metadata is not None and info.raw_metadata.is_cfa_mosaic:
+        return f"3 kanal (RGB Demosaiced), {info.preview_bit_depth}-bit"
+    if info.ser_metadata is not None and info.ser_metadata.is_cfa_mosaic:
         return f"3 kanal (RGB Demosaiced), {info.preview_bit_depth}-bit"
     if info.channels == 1 and not info.has_alpha:
         return f"1 kanal (Monokrom), {info.preview_bit_depth}-bit"
@@ -299,11 +332,13 @@ def format_exposure_time(value: Any) -> str:
 
 
 def format_fits_metadata(info: ImageInfo) -> str:
-    """Teks ringkasan metadata ilmiah (FITS atau Camera RAW), atau '-' bila bukan keduanya."""
+    """Teks ringkasan metadata ilmiah (FITS, Camera RAW, atau SER), atau '-' bila bukan ketiganya."""
     if info.fits_header is not None:
         return info.fits_header.summary_text()
     if info.raw_metadata is not None:
         return info.raw_metadata.summary_text()
+    if info.ser_metadata is not None:
+        return info.ser_metadata.summary_text()
     return EMPTY_VALUE
 
 
@@ -444,6 +479,11 @@ class MainWindow(QMainWindow):
         self.open_video_button.setToolTip("Buka berkas video (.MP4, .MOV, .AVI)")
         self.open_video_button.clicked.connect(self.open_video_dialog)
 
+        self.open_ser_button = QPushButton("SER")
+        self.open_ser_button.setObjectName("secondaryButton")
+        self.open_ser_button.setToolTip("Buka berkas video astronomi SER (.SER)")
+        self.open_ser_button.clicked.connect(self.open_ser_dialog)
+
         self.close_button = QPushButton("Close Image")
         self.close_button.setObjectName("secondaryButton")
         self.close_button.clicked.connect(self.close_image)
@@ -452,6 +492,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.open_multi_button)
         layout.addWidget(self.open_folder_button)
         layout.addWidget(self.open_video_button)
+        layout.addWidget(self.open_ser_button)
         layout.addWidget(self.close_button)
         layout.addStretch(1)
         return layout
@@ -664,6 +705,9 @@ class MainWindow(QMainWindow):
         self.section_video_info, self.header_video_info = self._create_section_card(
             "Informasi Video", _SECTION_VIDEO_ROWS
         )
+        self.section_ser_info, self.header_ser_info = self._create_section_card(
+            "Informasi SER", _SECTION_SER_ROWS
+        )
 
         content_layout.addWidget(self.section_input_sequence)
         content_layout.addWidget(self.section_image_info)
@@ -671,6 +715,7 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self.section_camera_metadata)
         content_layout.addWidget(self.section_fits_info)
         content_layout.addWidget(self.section_video_info)
+        content_layout.addWidget(self.section_ser_info)
         content_layout.addStretch(1)
 
         self.info_scroll_area.setWidget(self.info_scroll_content)
@@ -762,6 +807,39 @@ class MainWindow(QMainWindow):
         """Memuat berkas video ke dalam SequenceManager secara *lazy*."""
         try:
             report = self.sequence_manager.open_video_file(path)
+        except ImageReadError as err:
+            self._show_error(str(err))
+            return False
+        return self._finalize_sequence_open(report.warnings)
+
+    def _ser_file_dialog_filter(self) -> str:
+        """Filter dialog untuk berkas SER yang didukung."""
+        patterns = " ".join(f"*.{ext}" for ext in SER_EXTENSIONS)
+        return f"Berkas SER ({patterns});;Semua file (*)"
+
+    def open_ser_dialog(self) -> None:
+        """Menampilkan dialog pemilih berkas SER (.SER) lalu memuatnya."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Buka Berkas Astronomi SER (.SER)",
+            self._last_dir,
+            self._ser_file_dialog_filter(),
+        )
+        if not file_path:
+            return
+        self._last_dir = str(Path(file_path).parent)
+        self.load_ser_path(file_path)
+
+    def load_ser_path(
+        self,
+        path: str | Path,
+        endianness_policy: str = "siril_default",
+    ) -> bool:
+        """Memuat berkas SER ke dalam SequenceManager secara *lazy*."""
+        try:
+            report = self.sequence_manager.open_ser_file(
+                path, endianness_policy=endianness_policy
+            )
         except ImageReadError as err:
             self._show_error(str(err))
             return False
@@ -975,7 +1053,7 @@ class MainWindow(QMainWindow):
         self.section_camera_metadata.setVisible(False)
         self.section_fits_info.setVisible(False)
         self.section_video_info.setVisible(False)
-        self.section_video_info.setVisible(False)
+        self.section_ser_info.setVisible(False)
         self._refresh_sequence_controls()
         self.close_button.setEnabled(False)
         self.statusBar().showMessage(STATUS_EMPTY)
@@ -988,6 +1066,8 @@ class MainWindow(QMainWindow):
             return "Multiple Images"
         if mode == InputMode.VIDEO:
             return "Video Sequence"
+        if mode == InputMode.SER:
+            return "SER Sequence"
         return EMPTY_VALUE
 
     def _format_sequence_summary(self, entry: SequenceFrameEntry) -> str:
@@ -1009,7 +1089,11 @@ class MainWindow(QMainWindow):
         return "\n".join(lines)
 
     def _populate_section_a_input_sequence(self, entry: SequenceFrameEntry) -> None:
-        is_multi = self.sequence_manager.input_mode in (InputMode.MULTI, InputMode.VIDEO)
+        is_multi = self.sequence_manager.input_mode in (
+            InputMode.MULTI,
+            InputMode.VIDEO,
+            InputMode.SER,
+        )
         rep = self.sequence_manager.compatibility_report
 
         self._set_row("input_mode", self._format_mode_text(), visible=True)
@@ -1080,7 +1164,12 @@ class MainWindow(QMainWindow):
             else:
                 self._set_row("black_level", EMPTY_VALUE, visible=False)
         else:
-            self._set_row("cfa_pattern", EMPTY_VALUE, visible=False)
+            ser_cfa = (
+                info.ser_metadata.cfa_pattern_str
+                if (info.ser_metadata is not None and info.ser_metadata.cfa_pattern_str)
+                else None
+            )
+            self._set_row("cfa_pattern", ser_cfa or EMPTY_VALUE, visible=bool(ser_cfa))
             self._set_row("storage_dtype", info.dtype_str or EMPTY_VALUE, visible=bool(info.dtype_str))
             self._set_row("white_level", EMPTY_VALUE, visible=False)
             self._set_row("black_level", EMPTY_VALUE, visible=False)
@@ -1136,6 +1225,7 @@ class MainWindow(QMainWindow):
         if raw_meta is not None:
             self.section_fits_info.setVisible(False)
             self.section_video_info.setVisible(False)
+            self.section_ser_info.setVisible(False)
             self.header_camera_metadata.setText("Metadata RAW")
             d = raw_meta.to_display_dict()
             pairs = (
@@ -1174,6 +1264,7 @@ class MainWindow(QMainWindow):
         if vmeta is not None:
             self._clear_full_fits_header_grid()
             self.section_fits_info.setVisible(False)
+            self.section_ser_info.setVisible(False)
             self.header_video_info.setText("Informasi Video")
             dv = vmeta.to_display_dict()
             self._set_row("video_container", f"{dv['CONTAINER']} ({dv['FILE_SIZE']})", visible=True)
@@ -1211,6 +1302,70 @@ class MainWindow(QMainWindow):
         self.section_video_info.setVisible(False)
         for vk, _ in _SECTION_VIDEO_ROWS:
             self._set_row(vk, EMPTY_VALUE, visible=False)
+
+        smeta = info.ser_metadata
+        if smeta is not None:
+            self._clear_full_fits_header_grid()
+            self.section_fits_info.setVisible(False)
+            self.header_ser_info.setText("Informasi SER")
+            ds = smeta.to_display_dict()
+            self._set_row("ser_file_id", ds["FILE_ID"], visible=True)
+            self._set_row("ser_file_size", ds["FILE_SIZE"], visible=True)
+            self._set_row("ser_color_id", ds["COLOR_ID"], visible=True)
+            self._set_row(
+                "ser_cfa_pattern",
+                ds["CFA_PATTERN"],
+                visible=bool(smeta.cfa_pattern_str),
+            )
+            self._set_row("ser_resolution", ds["RESOLUTION"], visible=True)
+            self._set_row("ser_pixel_depth", ds["PIXEL_DEPTH"], visible=True)
+            self._set_row("ser_endianness", ds["ENDIANNESS"], visible=True)
+            self._set_row("ser_frame_count", ds["FRAME_COUNT"], visible=True)
+            self._set_row(
+                "ser_observer",
+                ds["OBSERVER"],
+                visible=(ds["OBSERVER"] != SER_UNAVAILABLE),
+            )
+            self._set_row(
+                "ser_instrument",
+                ds["INSTRUMENT"],
+                visible=(ds["INSTRUMENT"] != SER_UNAVAILABLE),
+            )
+            self._set_row(
+                "ser_telescope",
+                ds["TELESCOPE"],
+                visible=(ds["TELESCOPE"] != SER_UNAVAILABLE),
+            )
+            self._set_row(
+                "ser_datetime_local",
+                ds["DATETIME_LOCAL"],
+                visible=(ds["DATETIME_LOCAL"] != SER_UNAVAILABLE),
+            )
+            self._set_row(
+                "ser_datetime_utc",
+                ds["DATETIME_UTC"],
+                visible=(ds["DATETIME_UTC"] != SER_UNAVAILABLE),
+            )
+            self._set_row("ser_trailer_status", ds["TRAILER_STATUS"], visible=True)
+
+            if info.frame_timestamp_utc_str is not None and info.frame_timestamp_sec is not None:
+                fts_txt = (
+                    f"{info.frame_timestamp_utc_str} (+{info.frame_timestamp_sec:.4f} s, "
+                    f"ticks={info.frame_timestamp_ticks})"
+                )
+            elif info.frame_timestamp_utc_str is not None:
+                fts_txt = info.frame_timestamp_utc_str
+            else:
+                fts_txt = SER_UNAVAILABLE
+            self._set_row("ser_frame_timestamp", fts_txt, visible=True)
+            self._set_row("ser_honesty_note", smeta.honesty_note, visible=True)
+            self._set_row("fits_metadata", smeta.summary_text(), visible=False)
+            self.section_ser_info.setVisible(True)
+            return
+
+        self.section_ser_info.setVisible(False)
+        for sk, _ in _SECTION_SER_ROWS:
+            self._set_row(sk, EMPTY_VALUE, visible=False)
 
         fh = info.fits_header
         if fh is not None:
@@ -1280,6 +1435,7 @@ class MainWindow(QMainWindow):
         self.section_camera_metadata.setVisible(False)
         self.section_fits_info.setVisible(False)
         self.section_video_info.setVisible(False)
+        self.section_ser_info.setVisible(False)
 
     def _show_error(self, message: str) -> None:
         """Menampilkan pesan galat kepada pengguna (dipisah agar mudah diuji)."""
