@@ -28,6 +28,7 @@ from PySide6.QtGui import QImage, QImageIOHandler, QImageReader
 
 if TYPE_CHECKING:
     from hilalone.input_manager.adapters.fits_reader import FitsHeaderInfo, FitsHduSummary
+    from hilalone.input_manager.adapters.raw_reader import RawMetadataInfo
     from hilalone.input_manager.adapters.tiff_reader import TiffPageSummary
 
 # Ekstensi yang ditangani melalui QImageReader (Qt).
@@ -37,9 +38,10 @@ _QT_EXTENSIONS_BY_FORMAT: dict[str, tuple[str, ...]] = {
     "jpg": ("jpg", "jpeg"),
     "bmp": ("bmp",),
 }
-# Ekstensi ilmiah yang ditangani melalui adapter khusus.
+# Ekstensi ilmiah & kamera yang ditangani melalui adapter khusus.
 _TIFF_EXTENSIONS = ("tif", "tiff")
 _FITS_EXTENSIONS = ("fit", "fits", "fts")
+_RAW_EXTENSIONS = ("cr2", "cr3", "nef", "arw", "dng", "orf", "raf", "rw2", "pef", "srw")
 
 # Bit depth preview layar (selalu 8-bit pada v0.1).
 PREVIEW_BIT_DEPTH = 8
@@ -155,6 +157,7 @@ class ImageInfo:
     hdu_count: int = 1
     image_hdu_count: int = 1
     fits_header: FitsHeaderInfo | None = None
+    raw_metadata: RawMetadataInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -164,6 +167,9 @@ class LoadedImage:
     info: ImageInfo
     preview: QImage
     scientific_data: np.ndarray | None = None
+    raw_image_visible: np.ndarray | None = None
+    raw_image_full: np.ndarray | None = None
+    demosaiced_rgb: np.ndarray | None = None
 
 
 def supported_extensions() -> tuple[str, ...]:
@@ -175,7 +181,7 @@ def supported_extensions() -> tuple[str, ...]:
             for ext in exts:
                 if ext not in extensions:
                     extensions.append(ext)
-    for ext in (*_TIFF_EXTENSIONS, *_FITS_EXTENSIONS):
+    for ext in (*_TIFF_EXTENSIONS, *_FITS_EXTENSIONS, *_RAW_EXTENSIONS):
         if ext not in extensions:
             extensions.append(ext)
     return tuple(extensions)
@@ -399,6 +405,33 @@ def inspect_image_header(path: str | Path) -> ImageInfo:
             fits_header=hdr_info,
         )
 
+    if ext in _RAW_EXTENSIONS:
+        from hilalone.input_manager.adapters.raw_reader import inspect_raw_header
+
+        raw_meta, dtype_str, channels = inspect_raw_header(path)
+        dt = np.dtype(dtype_str)
+        ext_upper = ext.upper()
+        fmt_label = f"RAW ({ext_upper})"
+        return ImageInfo(
+            path=path,
+            file_name=path.name,
+            file_format=fmt_label,
+            width=raw_meta.visible_width,
+            height=raw_meta.visible_height,
+            stored_width=raw_meta.raw_width or raw_meta.visible_width,
+            stored_height=raw_meta.raw_height or raw_meta.visible_height,
+            channels=channels,
+            has_alpha=False,
+            original_bit_depth=dt.itemsize * 8,
+            original_is_float=bool(np.issubdtype(dt, np.floating)),
+            preview_bit_depth=PREVIEW_BIT_DEPTH,
+            exif_orientation="Normal (tanpa rotasi)",
+            orientation_applied=False,
+            dtype_str=dtype_str,
+            stored_dtype_str=dtype_str,
+            raw_metadata=raw_meta,
+        )
+
     # Format berbasis Qt (PNG/JPEG/BMP): hanya baca header melalui QImageReader tanpa .read()
     meta = QImageReader(str(path))
     meta.setAutoTransform(False)
@@ -520,6 +553,43 @@ def _read_fits_via_adapter(path: Path, hdu_index: int | None) -> LoadedImage:
     )
 
 
+def _read_raw_via_adapter(path: Path) -> LoadedImage:
+    """Membaca berkas Camera RAW melalui adapter rawpy dan membungkusnya ke LoadedImage."""
+    from hilalone.input_manager.adapters.raw_reader import read_raw
+
+    result = read_raw(path)
+    ext_upper = path.suffix.lower().lstrip(".").upper()
+    fmt_label = f"RAW ({ext_upper})"
+
+    info = ImageInfo(
+        path=path,
+        file_name=path.name,
+        file_format=fmt_label,
+        width=result.width,
+        height=result.height,
+        stored_width=result.stored_width,
+        stored_height=result.stored_height,
+        channels=result.channels,
+        has_alpha=result.has_alpha,
+        original_bit_depth=result.original_bit_depth,
+        original_is_float=result.original_is_float,
+        preview_bit_depth=PREVIEW_BIT_DEPTH,
+        exif_orientation="Normal (tanpa rotasi)",
+        orientation_applied=False,
+        dtype_str=result.dtype_str,
+        stored_dtype_str=result.stored_dtype_str,
+        raw_metadata=result.metadata,
+    )
+    return LoadedImage(
+        info=info,
+        preview=result.preview,
+        scientific_data=result.scientific_data,
+        raw_image_visible=result.raw_image_visible,
+        raw_image_full=result.raw_image_full,
+        demosaiced_rgb=result.demosaiced_rgb,
+    )
+
+
 def read_image(
     path: str | Path,
     page_index: int | None = None,
@@ -534,6 +604,8 @@ def read_image(
         return _read_tiff_via_adapter(path, page_index=page_index)
     if ext in _FITS_EXTENSIONS:
         return _read_fits_via_adapter(path, hdu_index=hdu_index)
+    if ext in _RAW_EXTENSIONS:
+        return _read_raw_via_adapter(path)
 
     # Pembaca #1: tanpa rotasi otomatis untuk mengambil metadata dan scientific_data asli
     meta = QImageReader(str(path))

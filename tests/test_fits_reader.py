@@ -253,3 +253,173 @@ def test_fits_source_file_never_modified_and_handle_closed(tmp_path: Path) -> No
     renamed = tmp_path / "renamed_check.fits"
     path.rename(renamed)
     assert renamed.exists()
+
+
+# -------------------------------------------- 8. Tampilan GUI Informasi FITS & Header Lengkap
+def test_gui_fits_structured_metadata_and_collapsible_full_header(
+    qapp,  # noqa: ANN001
+    tmp_path: Path,
+) -> None:
+    """Menguji 3 sub-kelompok Informasi FITS, DATE-OBS panjang, keyword kustom, dan collapsible Header Lengkap."""
+    from hilalone.gui.main_window import MainWindow
+
+    # 1. Buat berkas FITS dengan header lengkap + keyword kustom + DATE-OBS panjang
+    data1 = np.arange(80, dtype=np.int16).reshape(8, 10)
+    hdu1 = fits.PrimaryHDU(data=data1)
+    long_date_obs = "2026-06-16T17:21:29.987654321Z"
+    hdu1.header["BSCALE"] = 1.0
+    hdu1.header["BZERO"] = 0.0
+    hdu1.header["BLANK"] = -32768
+    hdu1.header["DATE-OBS"] = (long_date_obs, "High precision UTC observation time")
+    hdu1.header["DATE"] = "2026-06-16"
+    hdu1.header["TIME-OBS"] = "17:21:29.987"
+    hdu1.header["EXPTIME"] = (0.09178114256022202, "Exposure time in seconds")
+    hdu1.header["GAIN"] = 120
+    hdu1.header["FILTER"] = "IR-Pass 685nm"
+    hdu1.header["OBJECT"] = "Hilal Dzulhijjah 1447H"
+    hdu1.header["INSTRUME"] = "ZWO ASI290MM Mini Planetary Camera"
+    hdu1.header["TELESCOP"] = "William Optics RedCat 51 APO"
+    hdu1.header["OBSERVER"] = "Tim Rukyat HILALONE"
+    hdu1.header["DETECTOR"] = "Sony IMX290"
+    hdu1.header["CUSTOMKW"] = ("HILAL_2026_OK", "Custom observatory tag")
+    p_full = tmp_path / "01_full_meta.fits"
+    hdu1.writeto(p_full)
+
+    # 2. Buat berkas FITS dengan header minimal (tanpa metadata observasi/instrumen)
+    data2 = np.zeros((8, 10), dtype=np.int16)
+    p_min = tmp_path / "02_min_meta.fits"
+    fits.PrimaryHDU(data=data2).writeto(p_min)
+
+    win = MainWindow()
+    win.resize(1333, 768)
+    win.show()
+    qapp.processEvents()
+    try:
+        # Buka Single Image FITS lengkap
+        assert win.load_path(p_full) is True
+        qapp.processEvents()
+
+        # Pastikan bagian 'Informasi FITS' tampil dan 'Metadata RAW' tersembunyi
+        assert win.header_fits_info.text() == "Informasi FITS"
+        assert win.section_fits_info.isHidden() is False
+        assert win.section_camera_metadata.isHidden() is True
+
+        # A. Struktur Data
+        assert win._info_values["fits_bitpix"].text() == "16"
+        assert win._info_values["fits_naxis"].text() == "2"
+        assert win._info_values["fits_naxis1"].text() == "10"
+        assert win._info_values["fits_naxis2"].text() == "8"
+        assert win._info_values["fits_blank"].isHidden() is False
+        assert win._info_values["fits_blank"].text() == "-32768"
+
+        # B. Informasi Observasi (DATE-OBS utuh dan EXPTIME diformat ke ms pada ringkasan)
+        assert win.fits_sub_struct_label.text() == "A. Struktur Data"
+        assert win.fits_sub_obs_label.text() == "B. Informasi Observasi"
+        assert win.fits_sub_inst_label.text() == "C. Informasi Instrumen"
+        assert win._info_values["fits_date_obs"].text() == long_date_obs
+        assert win._info_values["fits_date"].isHidden() is False
+        assert win._info_values["fits_date"].text() == "2026-06-16"
+        assert win._info_values["fits_time_obs"].isHidden() is False
+        assert win._info_values["fits_exptime"].text() == "91.78 ms"
+        assert win._info_values["fits_gain"].text() == "120"
+        assert win._info_values["fits_filter"].text() == "IR-Pass 685nm"
+        assert win._info_values["fits_object"].text() == "Hilal Dzulhijjah 1447H"
+
+        # C. Informasi Instrumen
+        assert win._info_values["fits_instrume"].text() == "ZWO ASI290MM Mini Planetary Camera"
+        assert win._info_values["fits_telescop"].text() == "William Optics RedCat 51 APO"
+        assert win._info_values["fits_observer"].text() == "Tim Rukyat HILALONE"
+        assert win._info_values["fits_detector"].text() == "Sony IMX290"
+
+        # Bagian Collapsible: Header FITS Lengkap (default tertutup, dibuka saat diklik)
+        assert win.fits_full_header_toggle.isChecked() is False
+        assert win.fits_full_header_container.isHidden() is True
+        win.fits_full_header_toggle.setChecked(True)
+        qapp.processEvents()
+        assert win.fits_full_header_container.isHidden() is False
+        full_hdr_text = win._info_values["fits_full_header"].text()
+        assert "CUSTOMKW" in full_hdr_text
+        assert "HILAL_2026_OK" in full_hdr_text
+        assert "Custom observatory tag" in full_hdr_text
+        assert long_date_obs in full_hdr_text
+        # Nilai EXPTIME asli berpresisi penuh tetap utuh di Header FITS Lengkap!
+        assert "0.09178114256022202" in full_hdr_text
+
+        # 3. Uji Multiple Images FITS (perpindahan dari header lengkap ke header minimal)
+        assert win.load_sequence_paths([p_full, p_min]) is True
+        qapp.processEvents()
+        win.show_next_frame()
+        qapp.processEvents()
+
+        assert win._info_values["file_name"].text() == "02_min_meta.fits"
+        assert win._info_values["fits_date_obs"].text() == "Tidak tersedia"
+        assert win._info_values["fits_exptime"].text() == "Tidak tersedia"
+        assert win._info_values["fits_gain"].text() == "Tidak tersedia"
+        assert win._info_values["fits_instrume"].text() == "Tidak tersedia"
+        assert win._info_values["fits_telescop"].text() == "Tidak tersedia"
+        # Field opsional yang tidak ada harus disembunyikan pada berkas minimal
+        assert win._info_values["fits_blank"].isHidden() is True
+        assert win._info_values["fits_date"].isHidden() is True
+        assert win._info_values["fits_time_obs"].isHidden() is True
+        assert win._info_values["fits_filter"].isHidden() is True
+        assert win._info_values["fits_object"].isHidden() is True
+        assert win._info_values["fits_observer"].isHidden() is True
+        assert win._info_values["fits_detector"].isHidden() is True
+    finally:
+        win.close()
+
+
+@pytest.mark.parametrize(
+    ("raw_val", "expected_text"),
+    [
+        (20.0, "20 s"),
+        (1.7021129, "1.7 s"),
+        (0.09178114256, "91.78 ms"),
+        (0.020, "20 ms"),
+        (0.0005, "500 µs"),
+        (None, "Tidak tersedia"),
+        (float("nan"), "Tidak tersedia"),
+        (float("inf"), "Tidak tersedia"),
+        (float("-inf"), "Tidak tersedia"),
+        (-0.05, "Tidak tersedia"),
+        (-10, "Tidak tersedia"),
+        (0.0, "Tidak tersedia"),
+    ],
+)
+def test_exposure_time_formatter_cases(raw_val: object, expected_text: str) -> None:
+    """Menguji helper format_exposure_time pada seluruh kasus s, ms, µs, dan nilai tidak valid."""
+    from hilalone.gui.main_window import format_exposure_time
+
+    assert format_exposure_time(raw_val) == expected_text
+
+
+def test_exposure_time_formatting_preserves_source_fits_header_precision(
+    qapp,  # noqa: ANN001
+    tmp_path: Path,
+) -> None:
+    """Memastikan pemformatan EXPTIME di GUI tidak mengubah nilai asli pada FitsHeaderInfo maupun file FITS."""
+    from hilalone.gui.main_window import MainWindow
+
+    orig_exptime = 0.09178114256022202
+    data = np.ones((6, 8), dtype=np.uint16)
+    hdu = fits.PrimaryHDU(data=data)
+    hdu.header["EXPTIME"] = orig_exptime
+    fits_path = tmp_path / "precision_check.fits"
+    hdu.writeto(fits_path)
+    before_hash = _sha256(fits_path)
+
+    win = MainWindow()
+    try:
+        assert win.load_path(fits_path) is True
+        assert win._info_values["fits_exptime"].text() == "91.78 ms"
+
+        # Nilai di dalam model data ilmiah tetap float berpresisi penuh
+        entry = win.sequence_manager.entries[0]
+        assert entry.info is not None
+        assert entry.info.fits_header is not None
+        assert entry.info.fits_header.exptime == orig_exptime
+
+        # Berkas FITS asli tidak berubah
+        assert _sha256(fits_path) == before_hash
+    finally:
+        win.close()

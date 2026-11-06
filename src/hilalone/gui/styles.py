@@ -87,14 +87,83 @@ QFrame#infoPanel {
     border: 1px solid #1e2a45;
     border-radius: 8px;
 }
+QScrollArea#infoScrollArea {
+    background-color: transparent;
+    border: none;
+}
+QWidget#infoScrollContent {
+    background-color: #111a2e;
+}
+QFrame#infoSectionCard {
+    background-color: #0e1628;
+    border: 1px solid #1c2944;
+    border-radius: 6px;
+}
 QLabel#infoTitle {
-    font-size: 9pt;
+    font-size: 9.5pt;
     font-weight: 600;
     letter-spacing: 2px;
-    color: #7f8fb0;
+    color: #93a6cc;
 }
-QLabel#infoKey { color: #7f8fb0; }
-QLabel#infoValue { color: #e6ecf7; }
+QLabel#sectionHeader {
+    font-size: 8.5pt;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    color: #6b9fff;
+    padding-bottom: 2px;
+}
+QLabel#subSectionHeader {
+    font-size: 8pt;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: #93a6cc;
+    padding-top: 6px;
+    padding-bottom: 2px;
+    border-top: 1px solid #1a2640;
+}
+QPushButton#collapsibleButton {
+    background-color: #15223b;
+    color: #9ec0ff;
+    border: 1px solid #2a3a5e;
+    border-radius: 5px;
+    padding: 6px 10px;
+    text-align: left;
+    font-size: 9pt;
+    font-weight: 600;
+}
+QPushButton#collapsibleButton:hover {
+    background-color: #1d2e4f;
+}
+QFrame#fullHeaderBox {
+    background-color: #090f1d;
+    border: 1px solid #1c2944;
+    border-radius: 5px;
+}
+QLabel#infoKey {
+    color: #8a9bbd;
+    font-size: 9.5pt;
+}
+QLabel#infoValue {
+    color: #e6ecf7;
+    font-size: 9.5pt;
+}
+QScrollBar:vertical {
+    background: #0e1628;
+    width: 8px;
+    margin: 2px 0 2px 0;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical {
+    background: #2a3a5e;
+    min-height: 24px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #4f8cff;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
 
 /* Status bar */
 QStatusBar {

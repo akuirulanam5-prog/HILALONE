@@ -63,14 +63,18 @@ def natural_sort_key(path: str | Path) -> tuple[tuple[int, int | str], ...]:
 
 
 def _extract_timestamp_str(info: ImageInfo | None) -> str | None:
-    """Mengambil string timestamp pengamatan (mis. DATE-OBS pada FITS) bila ada."""
-    if info is None or info.fits_header is None:
+    """Mengambil string timestamp pengamatan (DATE-OBS pada FITS atau timestamp pada RAW) bila ada."""
+    if info is None:
         return None
-    ts = info.fits_header.date_obs
-    if ts is None:
-        return None
-    cleaned = str(ts).strip()
-    return cleaned if cleaned else None
+    if info.fits_header is not None and info.fits_header.date_obs is not None:
+        cleaned = str(info.fits_header.date_obs).strip()
+        if cleaned:
+            return cleaned
+    if info.raw_metadata is not None and info.raw_metadata.timestamp_str is not None:
+        cleaned = str(info.raw_metadata.timestamp_str).strip()
+        if cleaned:
+            return cleaned
+    return None
 
 
 def discover_supported_files_in_folder(folder_path: str | Path) -> list[Path]:
