@@ -54,6 +54,24 @@ QPushButton#secondaryButton:disabled {
     border: 1px solid #1a243c;
 }
 
+/* Pemilih frame (ComboBox) */
+QComboBox {
+    background-color: #111a2e;
+    color: #e6ecf7;
+    border: 1px solid #2a3a5e;
+    border-radius: 6px;
+    padding: 5px 10px;
+}
+QComboBox:disabled {
+    color: #4a5878;
+    border: 1px solid #1a243c;
+}
+QComboBox QAbstractItemView {
+    background-color: #111a2e;
+    color: #e6ecf7;
+    selection-background-color: #22304f;
+}
+
 /* Viewer */
 QLabel#imageViewer {
     background-color: #05080f;

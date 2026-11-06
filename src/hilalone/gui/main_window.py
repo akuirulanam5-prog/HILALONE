@@ -1,16 +1,18 @@
-"""Jendela utama HILALONE v0.1: Open Image, Image Viewer, Image Information, Close Image.
+"""Jendela utama HILALONE v0.1: Single Image, Multiple Images, Sequence Navigator, & Image Viewer.
 
-Berkas ini hanya mengurus TAMPILAN. Pembacaan dan validasi berkas dilakukan
-oleh ``hilalone.input_manager.image_reader`` (sesuai aturan: GUI tanpa logika
+Berkas ini hanya mengurus TAMPILAN. Pembacaan, pengurutan, dan validasi berkas
+dilakukan oleh ``hilalone.input_manager`` (sesuai aturan: GUI tanpa logika
 pemrosesan).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -33,15 +35,22 @@ from hilalone.input_manager.image_reader import (
     ImageReadError,
     MultiHduFitsError,
     MultiPageTiffError,
-    read_image,
     supported_extensions,
 )
+from hilalone.input_manager.models import (
+    FrameStatus,
+    InputMode,
+    SequenceFrameEntry,
+)
+from hilalone.input_manager.sequence_manager import SequenceManager
 
 EMPTY_VALUE = "-"
 STATUS_EMPTY = "Belum ada gambar dibuka."
 
 # Baris panel informasi: (kunci internal, label yang ditampilkan).
 _INFO_ROWS: tuple[tuple[str, str], ...] = (
+    ("input_mode", "Mode input"),
+    ("sequence_info", "Sequence"),
     ("file_name", "Nama file"),
     ("file_format", "Format"),
     ("width", "Lebar"),
@@ -69,8 +78,6 @@ def format_bit_depth(info: ImageInfo) -> str:
         suffix = " float" if info.original_is_float else ""
         if info.stored_dtype_str and info.dtype_str and info.stored_dtype_str != info.dtype_str:
             dtype_note = f" ({info.dtype_str}; stored {info.stored_dtype_str})"
-        elif info.dtype_str:
-            dtype_note = f" ({info.dtype_str})"
         else:
             dtype_note = ""
         original = f"{info.original_bit_depth}-bit{suffix}{dtype_note}"
@@ -104,6 +111,8 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 560)
         self._last_dir: str = str(Path.home())
         self._info_values: dict[str, QLabel] = {}
+        self.sequence_manager = SequenceManager()
+        self._updating_combo: bool = False
 
         self._build_ui()
         self.close_image()
@@ -116,7 +125,7 @@ class MainWindow(QMainWindow):
 
         root = QVBoxLayout(central)
         root.setContentsMargins(20, 16, 20, 8)
-        root.setSpacing(12)
+        root.setSpacing(10)
 
         root.addLayout(self._build_header())
         line = QFrame()
@@ -124,6 +133,7 @@ class MainWindow(QMainWindow):
         line.setFrameShape(QFrame.Shape.NoFrame)
         root.addWidget(line)
         root.addLayout(self._build_toolbar())
+        root.addWidget(self._build_sequence_nav_bar())
 
         body = QHBoxLayout()
         body.setSpacing(16)
@@ -148,24 +158,72 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> QHBoxLayout:
         layout = QHBoxLayout()
         layout.setSpacing(10)
+
         self.open_button = QPushButton("Open Image")
+        self.open_button.setToolTip("Buka satu gambar (Single Image – tanpa stacking)")
         self.open_button.clicked.connect(self.open_image_dialog)
+
+        self.open_multi_button = QPushButton("Multiple Images")
+        self.open_multi_button.setObjectName("secondaryButton")
+        self.open_multi_button.setToolTip("Pilih beberapa file gambar sekaligus (Stacking wajib)")
+        self.open_multi_button.clicked.connect(self.open_multiple_images_dialog)
+
+        self.open_folder_button = QPushButton("Open Folder Sequence")
+        self.open_folder_button.setObjectName("secondaryButton")
+        self.open_folder_button.setToolTip("Buka seluruh gambar yang didukung dari satu folder")
+        self.open_folder_button.clicked.connect(self.open_folder_sequence_dialog)
+
+        self.open_video_button = QPushButton("Video")
+        self.open_video_button.setObjectName("secondaryButton")
+        self.open_video_button.setToolTip("Buka berkas video (akan tersedia pada sub-tahap Video Reader)")
+        self.open_video_button.clicked.connect(self.open_video_placeholder)
+
         self.close_button = QPushButton("Close Image")
         self.close_button.setObjectName("secondaryButton")
         self.close_button.clicked.connect(self.close_image)
+
         layout.addWidget(self.open_button)
+        layout.addWidget(self.open_multi_button)
+        layout.addWidget(self.open_folder_button)
+        layout.addWidget(self.open_video_button)
         layout.addWidget(self.close_button)
         layout.addStretch(1)
         return layout
 
+    def _build_sequence_nav_bar(self) -> QWidget:
+        self.nav_bar = QWidget()
+        layout = QHBoxLayout(self.nav_bar)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        lbl = QLabel("Daftar Frame:")
+        lbl.setObjectName("infoKey")
+
+        self.prev_frame_button = QPushButton("◀ Sebelumnya")
+        self.prev_frame_button.setObjectName("secondaryButton")
+        self.prev_frame_button.clicked.connect(self.show_previous_frame)
+
+        self.frame_combo = QComboBox()
+        self.frame_combo.currentIndexChanged.connect(self._on_frame_combo_changed)
+
+        self.next_frame_button = QPushButton("Berikutnya ▶")
+        self.next_frame_button.setObjectName("secondaryButton")
+        self.next_frame_button.clicked.connect(self.show_next_frame)
+
+        layout.addWidget(lbl)
+        layout.addWidget(self.prev_frame_button)
+        layout.addWidget(self.frame_combo, 1)
+        layout.addWidget(self.next_frame_button)
+        return self.nav_bar
+
     def _build_info_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("infoPanel")
-        panel.setFixedWidth(300)
+        panel.setFixedWidth(320)
 
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
         title = QLabel("INFORMASI GAMBAR")
         title.setObjectName("infoTitle")
@@ -173,7 +231,7 @@ class MainWindow(QMainWindow):
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(10)
+        grid.setVerticalSpacing(8)
         grid.setColumnStretch(1, 1)
         for row, (key, label_text) in enumerate(_INFO_ROWS):
             key_label = QLabel(label_text)
@@ -197,14 +255,50 @@ class MainWindow(QMainWindow):
         return f"Gambar yang didukung ({patterns});;Semua file (*)"
 
     def open_image_dialog(self) -> None:
-        """Menampilkan dialog pemilih berkas lalu memuat gambar yang dipilih."""
+        """Menampilkan dialog pemilih satu berkas lalu memuat gambar yang dipilih."""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Buka Gambar", self._last_dir, self._file_dialog_filter()
+            self, "Buka Satu Gambar (Single Image)", self._last_dir, self._file_dialog_filter()
         )
-        if not file_path:  # pengguna menekan Batal
+        if not file_path:
             return
         self._last_dir = str(Path(file_path).parent)
         self.load_path(file_path)
+
+    def open_multiple_images_dialog(self) -> None:
+        """Menampilkan dialog pemilih banyak berkas sekaligus."""
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Pilih Beberapa Gambar (Multiple Images)",
+            self._last_dir,
+            self._file_dialog_filter(),
+        )
+        if not file_paths:
+            return
+        self._last_dir = str(Path(file_paths[0]).parent)
+        self.load_sequence_paths(file_paths)
+
+    def open_folder_sequence_dialog(self) -> None:
+        """Menampilkan dialog pemilih satu folder sequence."""
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Pilih Folder Sequence Gambar",
+            self._last_dir,
+        )
+        if not folder:
+            return
+        self._last_dir = folder
+        self.load_folder_sequence(folder)
+
+    def open_video_placeholder(self) -> None:
+        """Menampilkan informasi bahwa fitur Video Reader akan diaktifkan pada sub-tahap berikutnya."""
+        QMessageBox.information(
+            self,
+            "Fitur Video Belum Tersedia",
+            (
+                "Pembaca berkas Video (MP4, MOV, AVI, dan SER) belum diaktifkan pada Sub-Tahap 2A ini.\n\n"
+                "Fitur Video Reader akan dikembangkan pada sub-tahap Input Manager berikutnya."
+            ),
+        )
 
     def _ask_tiff_page(self, file_name: str, pages: tuple[TiffPageSummary, ...]) -> int | None:
         """Meminta pengguna memilih halaman untuk TIFF multi-halaman."""
@@ -260,13 +354,11 @@ class MainWindow(QMainWindow):
         page_index: int | None = None,
         hdu_index: int | None = None,
     ) -> bool:
-        """Memuat gambar dari jalur tertentu. True bila berhasil.
-
-        Bila berkas berupa TIFF multi-halaman atau FITS dengan beberapa HDU gambar,
-        pengguna diminta memilih halaman/HDU terlebih dahulu.
-        """
+        """Memuat satu gambar sebagai mode Single Image (stacking_required = False)."""
         try:
-            loaded = read_image(file_path, page_index=page_index, hdu_index=hdu_index)
+            loaded = self.sequence_manager.open_single_file(
+                file_path, page_index=page_index, hdu_index=hdu_index
+            )
         except MultiPageTiffError as multi_err:
             selected_page = self._ask_tiff_page(multi_err.path.name, multi_err.pages)
             if selected_page is None:
@@ -284,28 +376,184 @@ class MainWindow(QMainWindow):
         except ImageReadError as error:
             self._show_error(str(error))
             return False
-        except Exception as error:  # jaring pengaman: aplikasi tidak boleh crash
+        except Exception as error:
             self._show_error(f"Terjadi kesalahan tak terduga saat membuka gambar: {error}")
             return False
 
         self.viewer.set_image(loaded.preview)
-        self._show_info(loaded.info)
+        self._refresh_sequence_controls()
+        self._show_info(loaded.info, self.sequence_manager.entries[0])
         self.close_button.setEnabled(True)
         self.statusBar().showMessage(
-            f"Dibuka: {loaded.info.file_name}  |  {loaded.info.width} × {loaded.info.height} px"
+            f"Dibuka (Single Image): {loaded.info.file_name}  |  {loaded.info.width} × {loaded.info.height} px"
         )
         return True
 
+    def load_sequence_paths(self, paths: Iterable[str | Path], sort_by: str = "natural") -> bool:
+        """Memuat daftar beberapa berkas gambar ke dalam Sequence Manager secara lazy."""
+        path_list = [Path(p) for p in paths]
+        if len(path_list) == 1:
+            return self.load_path(path_list[0])
+
+        try:
+            report = self.sequence_manager.open_files(path_list, sort_by=sort_by)
+        except ImageReadError as error:
+            self._show_error(str(error))
+            return False
+        except Exception as error:
+            self._show_error(f"Terjadi kesalahan saat memeriksa sequence gambar: {error}")
+            return False
+
+        return self._finalize_sequence_open(report.warnings)
+
+    def load_folder_sequence(self, folder_path: str | Path, sort_by: str = "natural") -> bool:
+        """Memuat seluruh berkas gambar yang didukung dari sebuah folder."""
+        try:
+            report = self.sequence_manager.open_folder(folder_path, sort_by=sort_by)
+        except ImageReadError as error:
+            self._show_error(str(error))
+            return False
+        except Exception as error:
+            self._show_error(f"Terjadi kesalahan saat membuka folder sequence: {error}")
+            return False
+
+        return self._finalize_sequence_open(report.warnings)
+
+    def _finalize_sequence_open(self, warnings: tuple[str, ...]) -> bool:
+        self._refresh_sequence_controls()
+        self.close_button.setEnabled(True)
+
+        # Pilih frame pertama yang dapat dipratinjau (atau indeks 0 bila semuanya error)
+        first_previewable = 0
+        for entry in self.sequence_manager.entries:
+            if entry.can_preview():
+                first_previewable = entry.frame_index
+                break
+
+        self.select_sequence_frame(first_previewable, show_error_dialog=False)
+
+        if warnings:
+            joined = "\n• ".join(warnings[:10])
+            more = f"\n... dan {len(warnings) - 10} peringatan lainnya." if len(warnings) > 10 else ""
+            self._show_warning(
+                "Peringatan Kompatibilitas Sequence:\n"
+                f"Metode pengurutan: {self.sequence_manager.sorting_method}\n\n"
+                f"• {joined}{more}\n\n"
+                "Catatan: Tidak ada frame yang dihapus diam-diam. Frame yang berbeda ukuran/kanal "
+                "ditandai TIDAK KOMPATIBEL untuk stacking tetapi tetap dapat dipratinjau satu per satu."
+            )
+        return True
+
+    def select_sequence_frame(self, index: int, show_error_dialog: bool = True) -> bool:
+        """Menampilkan pratinjau frame pada indeks tertentu (lazy load on demand)."""
+        entries = self.sequence_manager.entries
+        if index < 0 or index >= len(entries):
+            return False
+
+        self._updating_combo = True
+        self.frame_combo.setCurrentIndex(index)
+        self._updating_combo = False
+        self._update_nav_buttons(index, len(entries))
+
+        entry = entries[index]
+        if entry.status == FrameStatus.ERROR:
+            self.viewer.clear_image()
+            self._show_error_entry_info(entry)
+            msg = "; ".join(entry.issues) if entry.issues else "Berkas rusak atau tidak dapat dibaca."
+            self.statusBar().showMessage(f"Frame [{index + 1}/{len(entries)}] GAGAL DIBACA: {entry.file_name}")
+            if show_error_dialog:
+                self._show_error(f"Frame [{index + 1}/{len(entries)}] '{entry.file_name}':\n{msg}")
+            return False
+
+        try:
+            loaded = self.sequence_manager.load_frame(index)
+        except ImageReadError as err:
+            self.viewer.clear_image()
+            self._show_error_entry_info(entry)
+            if show_error_dialog:
+                self._show_error(str(err))
+            return False
+
+        updated_entry = self.sequence_manager.entries[index]
+        self.viewer.set_image(loaded.preview)
+        self._show_info(loaded.info, updated_entry)
+        self.statusBar().showMessage(
+            f"Frame [{index + 1}/{len(entries)}]: {loaded.info.file_name}  |  "
+            f"{loaded.info.width} × {loaded.info.height} px  |  {updated_entry.status_badge_indonesian()}"
+        )
+        return True
+
+    def show_previous_frame(self) -> None:
+        idx = self.sequence_manager.current_index
+        if idx > 0:
+            self.select_sequence_frame(idx - 1)
+
+    def show_next_frame(self) -> None:
+        idx = self.sequence_manager.current_index
+        if 0 <= idx < self.sequence_manager.frame_count - 1:
+            self.select_sequence_frame(idx + 1)
+
+    def _on_frame_combo_changed(self, index: int) -> None:
+        if self._updating_combo or index < 0:
+            return
+        self.select_sequence_frame(index)
+
+    def _refresh_sequence_controls(self) -> None:
+        entries = self.sequence_manager.entries
+        total = len(entries)
+        self._updating_combo = True
+        self.frame_combo.clear()
+        for entry in entries:
+            self.frame_combo.addItem(entry.dropdown_label(total))
+        self._updating_combo = False
+
+        has_items = total > 0
+        self.frame_combo.setEnabled(has_items)
+        self._update_nav_buttons(self.sequence_manager.current_index, total)
+
+    def _update_nav_buttons(self, current_idx: int, total: int) -> None:
+        self.prev_frame_button.setEnabled(total > 1 and current_idx > 0)
+        self.next_frame_button.setEnabled(total > 1 and 0 <= current_idx < total - 1)
+
     def close_image(self) -> None:
-        """Mengosongkan viewer dan panel informasi (berkas di disk tidak disentuh)."""
+        """Mengosongkan viewer, sequence manager, dan panel informasi (berkas di disk tidak disentuh)."""
+        self.sequence_manager.clear()
         self.viewer.clear_image()
         for label in self._info_values.values():
             label.setText(EMPTY_VALUE)
+        self._refresh_sequence_controls()
         self.close_button.setEnabled(False)
         self.statusBar().showMessage(STATUS_EMPTY)
 
-    def _show_info(self, info: ImageInfo) -> None:
+    def _format_mode_text(self) -> str:
+        mode = self.sequence_manager.input_mode
+        if mode == InputMode.SINGLE:
+            return "Single Image (Stacking: Tidak)"
+        if mode == InputMode.MULTI:
+            return f"Multiple Images – {self.sequence_manager.frame_count} frame (Stacking: Wajib)"
+        return EMPTY_VALUE
+
+    def _format_sequence_summary(self, entry: SequenceFrameEntry) -> str:
+        if self.sequence_manager.input_mode == InputMode.SINGLE:
+            return "1 frame (berkas tunggal)"
+        rep = self.sequence_manager.compatibility_report
+        ready_txt = "Siap secara struktural" if rep.is_ready_for_stacking else "Perlu perhatian (lihat peringatan)"
+        lines = [
+            f"Frame #{entry.frame_index + 1}/{rep.total_files} [{entry.status_badge_indonesian()}]",
+            f"Urutan: {self.sequence_manager.sorting_method}",
+            f"Kompatibel: {rep.compatible_count} | Inkompatibel: {rep.incompatible_count} | Error: {rep.error_count}",
+            f"Kesiapan struktural: {ready_txt}",
+        ]
+        if entry.issues:
+            lines.append("Masalah frame ini: " + "; ".join(entry.issues))
+        if entry.notes:
+            lines.append("Catatan: " + "; ".join(entry.notes))
+        return "\n".join(lines)
+
+    def _show_info(self, info: ImageInfo, entry: SequenceFrameEntry) -> None:
         values = {
+            "input_mode": self._format_mode_text(),
+            "sequence_info": self._format_sequence_summary(entry),
             "file_name": info.file_name,
             "file_format": info.file_format,
             "width": f"{info.width} px",
@@ -318,6 +566,18 @@ class MainWindow(QMainWindow):
         for key, text in values.items():
             self._info_values[key].setText(text)
 
+    def _show_error_entry_info(self, entry: SequenceFrameEntry) -> None:
+        for key, label in self._info_values.items():
+            label.setText(EMPTY_VALUE)
+        self._info_values["input_mode"].setText(self._format_mode_text())
+        self._info_values["sequence_info"].setText(self._format_sequence_summary(entry))
+        self._info_values["file_name"].setText(entry.file_name)
+        self._info_values["file_format"].setText("GAGAL DIBACA")
+
     def _show_error(self, message: str) -> None:
         """Menampilkan pesan galat kepada pengguna (dipisah agar mudah diuji)."""
         QMessageBox.warning(self, "Gagal membuka gambar", message)
+
+    def _show_warning(self, message: str) -> None:
+        """Menampilkan peringatan sequence kepada pengguna (dipisah agar mudah diuji)."""
+        QMessageBox.warning(self, "Peringatan Sequence", message)
