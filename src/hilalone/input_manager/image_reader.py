@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from hilalone.input_manager.adapters.fits_reader import FitsHeaderInfo, FitsHduSummary
     from hilalone.input_manager.adapters.raw_reader import RawMetadataInfo
     from hilalone.input_manager.adapters.tiff_reader import TiffPageSummary
+    from hilalone.input_manager.adapters.video_reader import VideoMetadataInfo
 
 # Ekstensi yang ditangani melalui QImageReader (Qt).
 _QT_EXTENSIONS_BY_FORMAT: dict[str, tuple[str, ...]] = {
@@ -158,6 +159,10 @@ class ImageInfo:
     image_hdu_count: int = 1
     fits_header: FitsHeaderInfo | None = None
     raw_metadata: RawMetadataInfo | None = None
+    video_metadata: VideoMetadataInfo | None = None
+    frame_pts: int | None = None
+    frame_timestamp_sec: float | None = None
+    decoded_pix_fmt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -170,6 +175,7 @@ class LoadedImage:
     raw_image_visible: np.ndarray | None = None
     raw_image_full: np.ndarray | None = None
     demosaiced_rgb: np.ndarray | None = None
+    native_video_planes: tuple[np.ndarray, ...] | None = None
 
 
 def supported_extensions() -> tuple[str, ...]:

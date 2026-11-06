@@ -24,10 +24,11 @@ from pathlib import Path
 from typing import Iterable
 
 from hilalone.input_manager.image_reader import (
+    PREVIEW_BIT_DEPTH,
     ImageInfo,
     ImageReadError,
     LoadedImage,
-     inspect_image_header,
+    inspect_image_header,
     read_image,
     supported_extensions,
 )
@@ -37,6 +38,10 @@ from hilalone.input_manager.models import (
     SequenceCompatibilityReport,
     SequenceFrameEntry,
 )
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from hilalone.input_manager.adapters.video_reader import VideoSession
 
 SORT_NATURAL_LABEL = "Natural filename sorting"
 SORT_TIMESTAMP_LABEL = "Timestamp pengamatan (DATE-OBS)"
@@ -103,6 +108,7 @@ class SequenceManager:
         self._sorting_method: str = SORT_NATURAL_LABEL
         self._report: SequenceCompatibilityReport = self._empty_report()
         self._current_index: int = -1
+        self._video_session: VideoSession | None = None
 
     # ---------------------------------------------------------------- properti
     @property
@@ -110,9 +116,13 @@ class SequenceManager:
         return self._mode
 
     @property
+    def video_session(self) -> VideoSession | None:
+        return self._video_session
+
+    @property
     def stacking_required(self) -> bool:
-        """False untuk Single Image (atau kosong), True untuk Multiple Images (>1 berkas)."""
-        return self._mode == InputMode.MULTI
+        """False untuk Single Image (atau kosong), True untuk Multiple Images dan Video."""
+        return self._mode in (InputMode.MULTI, InputMode.VIDEO)
 
     @property
     def sorting_method(self) -> str:
@@ -135,8 +145,17 @@ class SequenceManager:
         return self._current_index
 
     # ---------------------------------------------------------- metode pembuka
+    def _close_active_video_session(self) -> None:
+        if self._video_session is not None:
+            try:
+                self._video_session.close()
+            except Exception:
+                pass
+            self._video_session = None
+
     def clear(self) -> None:
-        """Mengosongkan seluruh sesi sequence."""
+        """Mengosongkan seluruh sesi sequence dan menutup container video aktif."""
+        self._close_active_video_session()
         self._mode = InputMode.EMPTY
         self._entries = []
         self._sorting_method = SORT_NATURAL_LABEL
@@ -151,6 +170,7 @@ class SequenceManager:
     ) -> LoadedImage:
         """Membuka satu berkas gambar sebagai mode SINGLE (stacking_required = False)."""
         loaded = read_image(path, page_index=page_index, hdu_index=hdu_index)
+        self._close_active_video_session()
         entry = SequenceFrameEntry(
             frame_index=0,
             source_path=loaded.info.path,
@@ -235,9 +255,115 @@ class SequenceManager:
         else:
             self._sorting_method = SORT_NATURAL_LABEL
 
+        self._close_active_video_session()
         self._mode = InputMode.SINGLE if len(inspected) == 1 else InputMode.MULTI
         self._build_entries_and_report(inspected)
         self._current_index = 0 if self._entries else -1
+        return self._report
+
+    def open_video_file(
+        self,
+        path: str | Path,
+        max_cache_size: int = 8,
+    ) -> SequenceCompatibilityReport:
+        """Membuka berkas video (.MP4, .MOV, .AVI) secara *lazy* sebagai sequence multi-frame.
+
+        - ``stacking_required`` bernilai ``True``.
+        - Seluruh frame didaftarkan sesuai urutan presentasi tanpa memuat piksel
+          seluruh video ke RAM.
+        """
+        from hilalone.input_manager.adapters.video_reader import (
+            VIDEO_EXTENSIONS,
+            VideoSession,
+        )
+
+        video_path = Path(path)
+        if not video_path.exists():
+            raise ImageReadError(f"File video tidak ditemukan: {video_path}")
+        if not video_path.is_file():
+            raise ImageReadError(f"Jalur yang dipilih bukan sebuah file video: {video_path}")
+
+        ext = video_path.suffix.lower().lstrip(".")
+        if ext not in VIDEO_EXTENSIONS:
+            shown = ", ".join(f".{e.upper()}" for e in VIDEO_EXTENSIONS)
+            raise ImageReadError(
+                f"Format file video '.{ext}' belum didukung pada Video Reader ini. "
+                f"Format video yang didukung: {shown}."
+            )
+
+        session = VideoSession(video_path, max_cache_size=max_cache_size)
+        self._close_active_video_session()
+        self._video_session = session
+
+        meta = session.metadata
+        channels = 1 if meta.is_monochrome else 3
+        dtype_str = "uint16" if meta.bits_per_component > 8 else "uint8"
+        bit_depth = 16 if meta.bits_per_component > 8 else 8
+        fmt_label = f"VIDEO ({ext.upper()} / {meta.codec_name})"
+
+        entries: list[SequenceFrameEntry] = []
+        for pkt_entry in session.frame_entries:
+            ts_str = (
+                f"{pkt_entry.timestamp_sec:.6f} s (PTS={pkt_entry.pts})"
+                if pkt_entry.timestamp_sec is not None
+                else None
+            )
+            frame_info = ImageInfo(
+                path=video_path,
+                file_name=f"{video_path.name} [Frame #{pkt_entry.frame_index + 1}]",
+                file_format=fmt_label,
+                width=meta.width,
+                height=meta.height,
+                stored_width=meta.width,
+                stored_height=meta.height,
+                channels=channels,
+                has_alpha=False,
+                original_bit_depth=bit_depth,
+                original_is_float=False,
+                preview_bit_depth=PREVIEW_BIT_DEPTH,
+                exif_orientation="Normal (tanpa rotasi)",
+                orientation_applied=False,
+                dtype_str=dtype_str,
+                stored_dtype_str=meta.pix_fmt,
+                video_metadata=meta,
+                frame_pts=pkt_entry.pts,
+                frame_timestamp_sec=pkt_entry.timestamp_sec,
+                decoded_pix_fmt=meta.pix_fmt,
+            )
+            entries.append(
+                SequenceFrameEntry(
+                    frame_index=pkt_entry.frame_index,
+                    source_path=video_path,
+                    info=frame_info,
+                    status=FrameStatus.COMPATIBLE,
+                    is_pixel_loaded=False,
+                    timestamp_str=ts_str,
+                    issues=(),
+                    notes=(),
+                )
+            )
+
+        self._mode = InputMode.VIDEO
+        self._entries = entries
+        if meta.has_missing_timestamps:
+            self._sorting_method = "Urutan presentasi video (sebagian/seluruh PTS tidak tersedia)"
+        elif meta.is_variable_frame_rate:
+            self._sorting_method = "Urutan presentasi video VFR (PTS × time_base)"
+        else:
+            self._sorting_method = "Urutan presentasi video CFR (PTS × time_base)"
+
+        self._report = SequenceCompatibilityReport(
+            is_ready_for_stacking=len(entries) >= 2,
+            reference_frame_index=0 if entries else None,
+            total_files=len(entries),
+            compatible_count=len(entries),
+            incompatible_count=0,
+            error_count=0,
+            mixed_bit_depth=False,
+            warnings=meta.warnings,
+            notes=(meta.honesty_note,),
+        )
+        self._current_index = 0 if entries else -1
         return self._report
 
     def load_frame(self, index: int) -> LoadedImage:
@@ -257,10 +383,82 @@ class SequenceManager:
                 f"Frame [{index + 1}/{len(self._entries)}] '{entry.file_name}' tidak dapat ditampilkan: {reason}"
             )
 
+        if self._video_session is not None and self._mode == InputMode.VIDEO:
+            try:
+                vframe = self._video_session.decode_frame(index)
+            except ImageReadError as err:
+                # Jangan hilangkan frame secara diam-diam; tandai ERROR di tempatnya
+                failed_entry = replace(
+                    entry,
+                    status=FrameStatus.ERROR,
+                    is_pixel_loaded=False,
+                    issues=(str(err),),
+                )
+                self._entries[index] = failed_entry
+                self._recompute_video_report_counts()
+                raise
+
+            meta = self._video_session.metadata
+            ext_upper = entry.source_path.suffix.lower().lstrip(".").upper()
+            fmt_label = f"VIDEO ({ext_upper} / {meta.codec_name})"
+            ts_str = (
+                f"{vframe.timestamp_sec:.6f} s (PTS={vframe.pts})"
+                if vframe.timestamp_sec is not None
+                else None
+            )
+            updated_info = ImageInfo(
+                path=entry.source_path,
+                file_name=entry.source_path.name,
+                file_format=fmt_label,
+                width=vframe.width,
+                height=vframe.height,
+                stored_width=vframe.width,
+                stored_height=vframe.height,
+                channels=vframe.channels,
+                has_alpha=False,
+                original_bit_depth=vframe.bit_depth,
+                original_is_float=False,
+                preview_bit_depth=PREVIEW_BIT_DEPTH,
+                exif_orientation="Normal (tanpa rotasi)",
+                orientation_applied=False,
+                dtype_str=vframe.dtype_str,
+                stored_dtype_str=vframe.decoded_pix_fmt,
+                video_metadata=meta,
+                frame_pts=vframe.pts,
+                frame_timestamp_sec=vframe.timestamp_sec,
+                decoded_pix_fmt=vframe.decoded_pix_fmt,
+            )
+            self._entries[index] = replace(
+                entry,
+                info=updated_info,
+                is_pixel_loaded=True,
+                timestamp_str=ts_str,
+            )
+            self._current_index = index
+            return LoadedImage(
+                info=updated_info,
+                preview=vframe.preview,
+                scientific_data=vframe.scientific_data,
+                native_video_planes=vframe.native_planes,
+            )
+
         loaded = read_image(entry.source_path)
         self._entries[index] = replace(entry, info=loaded.info, is_pixel_loaded=True)
         self._current_index = index
         return loaded
+
+    def _recompute_video_report_counts(self) -> None:
+        comp = sum(1 for e in self._entries if e.status == FrameStatus.COMPATIBLE)
+        incomp = sum(1 for e in self._entries if e.status == FrameStatus.INCOMPATIBLE)
+        err = sum(1 for e in self._entries if e.status == FrameStatus.ERROR)
+        ready = len(self._entries) >= 2 and comp >= 2 and incomp == 0 and err == 0
+        self._report = replace(
+            self._report,
+            is_ready_for_stacking=ready,
+            compatible_count=comp,
+            incompatible_count=incomp,
+            error_count=err,
+        )
 
     # ------------------------------------------------- logika validasi internal
     def _build_entries_and_report(

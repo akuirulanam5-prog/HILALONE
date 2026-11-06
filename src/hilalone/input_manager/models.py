@@ -48,6 +48,7 @@ class InputMode(str, Enum):
     EMPTY = "EMPTY"
     SINGLE = "SINGLE"
     MULTI = "MULTI"
+    VIDEO = "VIDEO"
 
 
 @dataclass(frozen=True)
@@ -106,7 +107,8 @@ class SequenceFrameEntry:
             dim = f"{self.info.width}×{self.info.height}"
             ch = {1: "Mono", 3: "RGB", 4: "RGBA"}.get(self.info.channels or 0, "?")
             dt = self.info.dtype_str or f"{self.info.original_bit_depth}-bit"
-            return f"{prefix} — {dim}, {ch}, {dt} [{self.status_badge_indonesian()}]"
+            ts_part = f" | t={self.timestamp_str}" if self.timestamp_str else ""
+            return f"{prefix}{ts_part} — {dim}, {ch}, {dt} [{self.status_badge_indonesian()}]"
         return f"{prefix} — [{self.status_badge_indonesian()}]"
 
 

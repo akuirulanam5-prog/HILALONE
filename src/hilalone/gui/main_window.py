@@ -37,6 +37,10 @@ from hilalone.input_manager.adapters.fits_reader import (
 )
 from hilalone.input_manager.adapters.raw_reader import UNAVAILABLE_TEXT as RAW_UNAVAILABLE
 from hilalone.input_manager.adapters.tiff_reader import TiffPageSummary
+from hilalone.input_manager.adapters.video_reader import (
+    UNAVAILABLE_TEXT as VIDEO_UNAVAILABLE,
+    VIDEO_EXTENSIONS,
+)
 from hilalone.input_manager.image_reader import (
     ImageInfo,
     ImageReadError,
@@ -135,6 +139,21 @@ _FITS_INST_ROWS: tuple[tuple[str, str], ...] = (
     ("fits_detector", "DETECTOR"),
 )
 
+# Kelompok D (VIDEO): Informasi Video
+_SECTION_VIDEO_ROWS: tuple[tuple[str, str], ...] = (
+    ("video_container", "Container & Ukuran"),
+    ("video_stream", "Video stream"),
+    ("video_codec", "Video codec"),
+    ("video_pix_fmt", "Pixel format"),
+    ("video_fps", "Frame rate"),
+    ("video_time_base", "time_base"),
+    ("video_frame_pts", "Timestamp frame"),
+    ("video_duration", "Durasi"),
+    ("video_bit_rate", "Bit rate"),
+    ("video_color_meta", "Color metadata"),
+    ("video_honesty_note", "Catatan video"),
+)
+
 # Baris sequence yang hanya relevan pada mode Multiple Images
 _MULTI_ONLY_KEYS: frozenset[str] = frozenset(
     {
@@ -152,12 +171,14 @@ _MULTI_ONLY_KEYS: frozenset[str] = frozenset(
 
 
 def format_metadata_label(info: ImageInfo | None) -> str:
-    """Label bagian metadata yang menyesuaikan format berkas (Informasi FITS, Metadata RAW, atau generik)."""
+    """Label bagian metadata yang menyesuaikan format berkas (Informasi FITS, Metadata RAW, Informasi Video, atau generik)."""
     if info is not None:
         if info.raw_metadata is not None:
             return "Metadata RAW"
         if info.fits_header is not None:
             return "Informasi FITS"
+        if info.video_metadata is not None:
+            return "Informasi Video"
     return "Metadata sumber"
 
 
@@ -420,8 +441,8 @@ class MainWindow(QMainWindow):
 
         self.open_video_button = QPushButton("Video")
         self.open_video_button.setObjectName("secondaryButton")
-        self.open_video_button.setToolTip("Buka berkas video (akan tersedia pada sub-tahap Video Reader)")
-        self.open_video_button.clicked.connect(self.open_video_placeholder)
+        self.open_video_button.setToolTip("Buka berkas video (.MP4, .MOV, .AVI)")
+        self.open_video_button.clicked.connect(self.open_video_dialog)
 
         self.close_button = QPushButton("Close Image")
         self.close_button.setObjectName("secondaryButton")
@@ -640,12 +661,16 @@ class MainWindow(QMainWindow):
             "Metadata RAW", _SECTION_RAW_ROWS
         )
         self.section_fits_info = self._build_fits_info_card()
+        self.section_video_info, self.header_video_info = self._create_section_card(
+            "Informasi Video", _SECTION_VIDEO_ROWS
+        )
 
         content_layout.addWidget(self.section_input_sequence)
         content_layout.addWidget(self.section_image_info)
         content_layout.addWidget(self.section_sensor_info)
         content_layout.addWidget(self.section_camera_metadata)
         content_layout.addWidget(self.section_fits_info)
+        content_layout.addWidget(self.section_video_info)
         content_layout.addStretch(1)
 
         self.info_scroll_area.setWidget(self.info_scroll_content)
@@ -711,14 +736,36 @@ class MainWindow(QMainWindow):
         self._last_dir = folder
         self.load_folder_sequence(folder)
 
-    def open_video_placeholder(self) -> None:
-        """Placeholder tombol Video sampai Sub-Tahap Video & SER Reader diimplementasikan."""
-        QMessageBox.information(
+    def _video_file_dialog_filter(self) -> str:
+        """Filter dialog untuk berkas video yang didukung."""
+        patterns = " ".join(f"*.{ext}" for ext in VIDEO_EXTENSIONS)
+        return f"Video yang didukung ({patterns});;Semua file (*)"
+
+    def open_video_dialog(self) -> None:
+        """Menampilkan dialog pemilih berkas video (.MP4, .MOV, .AVI) lalu memuatnya."""
+        file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Video Reader (Tahap Berikutnya)",
-            "Dukungan pembacaan berkas video astronomi (.SER) dan video umum "
-            "(.MP4, .MOV, .AVI) akan diaktifkan pada sub-tahap Input Manager berikutnya.",
+            "Buka Berkas Video (.MP4, .MOV, .AVI)",
+            self._last_dir,
+            self._video_file_dialog_filter(),
         )
+        if not file_path:
+            return
+        self._last_dir = str(Path(file_path).parent)
+        self.load_video_path(file_path)
+
+    def open_video_placeholder(self) -> None:
+        """Alias kompatibilitas yang membuka dialog pemilih berkas video."""
+        self.open_video_dialog()
+
+    def load_video_path(self, path: str | Path) -> bool:
+        """Memuat berkas video ke dalam SequenceManager secara *lazy*."""
+        try:
+            report = self.sequence_manager.open_video_file(path)
+        except ImageReadError as err:
+            self._show_error(str(err))
+            return False
+        return self._finalize_sequence_open(report.warnings)
 
     def _ask_tiff_page(self, path: Path, pages: tuple[TiffPageSummary, ...]) -> int | None:
         items = [p.label() for p in pages]
@@ -927,6 +974,8 @@ class MainWindow(QMainWindow):
             self._set_row_visible(key, key not in _MULTI_ONLY_KEYS)
         self.section_camera_metadata.setVisible(False)
         self.section_fits_info.setVisible(False)
+        self.section_video_info.setVisible(False)
+        self.section_video_info.setVisible(False)
         self._refresh_sequence_controls()
         self.close_button.setEnabled(False)
         self.statusBar().showMessage(STATUS_EMPTY)
@@ -937,6 +986,8 @@ class MainWindow(QMainWindow):
             return "Single Image"
         if mode == InputMode.MULTI:
             return "Multiple Images"
+        if mode == InputMode.VIDEO:
+            return "Video Sequence"
         return EMPTY_VALUE
 
     def _format_sequence_summary(self, entry: SequenceFrameEntry) -> str:
@@ -958,7 +1009,7 @@ class MainWindow(QMainWindow):
         return "\n".join(lines)
 
     def _populate_section_a_input_sequence(self, entry: SequenceFrameEntry) -> None:
-        is_multi = self.sequence_manager.input_mode == InputMode.MULTI
+        is_multi = self.sequence_manager.input_mode in (InputMode.MULTI, InputMode.VIDEO)
         rep = self.sequence_manager.compatibility_report
 
         self._set_row("input_mode", self._format_mode_text(), visible=True)
@@ -1084,6 +1135,7 @@ class MainWindow(QMainWindow):
         raw_meta = info.raw_metadata
         if raw_meta is not None:
             self.section_fits_info.setVisible(False)
+            self.section_video_info.setVisible(False)
             self.header_camera_metadata.setText("Metadata RAW")
             d = raw_meta.to_display_dict()
             pairs = (
@@ -1117,6 +1169,48 @@ class MainWindow(QMainWindow):
             "demosaic_note",
         ):
             self._set_row(k, EMPTY_VALUE, visible=False)
+
+        vmeta = info.video_metadata
+        if vmeta is not None:
+            self._clear_full_fits_header_grid()
+            self.section_fits_info.setVisible(False)
+            self.header_video_info.setText("Informasi Video")
+            dv = vmeta.to_display_dict()
+            self._set_row("video_container", f"{dv['CONTAINER']} ({dv['FILE_SIZE']})", visible=True)
+            self._set_row("video_stream", dv["VIDEO_STREAM"], visible=True)
+            self._set_row("video_codec", dv["CODEC"], visible=True)
+            pix_txt = info.decoded_pix_fmt or vmeta.pix_fmt
+            self._set_row("video_pix_fmt", f"{pix_txt} ({vmeta.bits_per_component}-bit)", visible=True)
+            self._set_row("video_fps", dv["FRAME_RATE"], visible=True)
+            self._set_row("video_time_base", dv["TIME_BASE"], visible=True)
+
+            if info.frame_timestamp_sec is not None and info.frame_pts is not None:
+                pts_txt = f"{info.frame_timestamp_sec:.6f} s (PTS={info.frame_pts})"
+            elif info.frame_pts is not None:
+                pts_txt = f"PTS={info.frame_pts}"
+            else:
+                pts_txt = VIDEO_UNAVAILABLE
+            self._set_row("video_frame_pts", pts_txt, visible=True)
+
+            self._set_row("video_duration", dv["DURATION"], visible=True)
+            self._set_row(
+                "video_bit_rate",
+                dv["BIT_RATE"],
+                visible=(dv["BIT_RATE"] != VIDEO_UNAVAILABLE),
+            )
+            self._set_row(
+                "video_color_meta",
+                dv["COLOR_META"],
+                visible=(dv["COLOR_META"] != VIDEO_UNAVAILABLE),
+            )
+            self._set_row("video_honesty_note", vmeta.honesty_note, visible=True)
+            self._set_row("fits_metadata", vmeta.summary_text(), visible=False)
+            self.section_video_info.setVisible(True)
+            return
+
+        self.section_video_info.setVisible(False)
+        for vk, _ in _SECTION_VIDEO_ROWS:
+            self._set_row(vk, EMPTY_VALUE, visible=False)
 
         fh = info.fits_header
         if fh is not None:
@@ -1185,6 +1279,7 @@ class MainWindow(QMainWindow):
         self._set_row("file_format", "GAGAL DIBACA", visible=True)
         self.section_camera_metadata.setVisible(False)
         self.section_fits_info.setVisible(False)
+        self.section_video_info.setVisible(False)
 
     def _show_error(self, message: str) -> None:
         """Menampilkan pesan galat kepada pengguna (dipisah agar mudah diuji)."""
