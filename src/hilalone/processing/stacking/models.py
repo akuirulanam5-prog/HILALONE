@@ -223,6 +223,41 @@ class PreStackValidationReport:
 
 
 @dataclass(frozen=True)
+class LoadedMasterFlat:
+    """Representasi Master Flat yang telah dimuat (baik dari 1 berkas maupun hasil gabungan sequence flat)."""
+
+    scientific_data: np.ndarray  # float32 linear sebelum normalisasi
+    preview: QImage              # Pratinjau 8-bit terpisah untuk ditampilkan di GUI
+    info: object | None          # ImageInfo referensi bila tersedia
+    source_description: str
+    source_paths: tuple[Path, ...]
+    flat_format: str
+    flat_input_type: str         # "SINGLE", "SEQUENCE", atau "ARRAY"
+    frame_count: int
+    width: int
+    height: int
+    channels: int
+    dtype_str: str
+    bit_depth: int | None
+    is_cfa_mosaic: bool
+    cfa_pattern_str: str | None
+    exif_orientation: str
+    saturation_ceiling: float | None = None
+    is_lossy_source: bool = False
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FlatCompatibilityCheckResult:
+    """Hasil pemeriksaan kompatibilitas antara Master Flat dan Light Frame Sequence."""
+
+    is_compatible: bool
+    status_text: str
+    reasons: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class FlatCalibrationReport:
     """Laporan validasi dan penerapan Master Flat opsional."""
 
@@ -236,6 +271,18 @@ class FlatCalibrationReport:
     flat_mean_before_norm: float
     protected_zero_pixels_count: int
     warnings: tuple[str, ...]
+    flat_format: str = "ARRAY"
+    flat_input_type: str = "SINGLE"
+    flat_frame_count: int = 1
+    normalization_method: str = "F_norm(x,y) = F(x,y) / median(F_valid)"
+    flat_median_before_norm: float = 0.0
+    invalid_pixel_count: int = 0
+    zero_or_negative_pixel_count: int = 0
+    non_finite_pixel_count: int = 0
+    saturated_pixel_count: int = 0
+    calibration_status: str = "DITERAPKAN"
+    not_applied_reason: str | None = None
+    invalid_pixel_mask: np.ndarray | None = None
 
 
 @dataclass(frozen=True)

@@ -165,6 +165,158 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
 }
 
+/* Panel Pemrosesan Citra (IMAGE PROCESSING) */
+QFrame#processingCard {
+    background-color: #0f1b33;
+    border: 1px solid #2c4778;
+    border-radius: 6px;
+}
+QPushButton#startStackingButton {
+    background-color: #2f7cf6;
+    color: #ffffff;
+    border: 1px solid #599bff;
+    border-radius: 6px;
+    padding: 9px 16px;
+    font-size: 10pt;
+    font-weight: 700;
+}
+QPushButton#startStackingButton:hover {
+    background-color: #468dff;
+}
+QPushButton#startStackingButton:disabled {
+    background-color: #162138;
+    color: #526282;
+    border: 1px solid #1f2e4d;
+}
+QPushButton#startAutoProcessButton {
+    background-color: #10b981;
+    color: #ffffff;
+    border: 1px solid #34d399;
+    border-radius: 6px;
+    padding: 10px 18px;
+    font-size: 10.5pt;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+QPushButton#startAutoProcessButton:hover {
+    background-color: #059669;
+}
+QPushButton#startAutoProcessButton:disabled {
+    background-color: #162624;
+    color: #436359;
+    border: 1px solid #1d332d;
+}
+QPushButton#toggleBeforeAfterButton {
+    background-color: #243552;
+    color: #93c5fd;
+    border: 1px solid #3b82f6;
+    border-radius: 5px;
+    padding: 6px 12px;
+    font-size: 9pt;
+    font-weight: 600;
+}
+QPushButton#toggleBeforeAfterButton:hover {
+    background-color: #2f456c;
+}
+QPushButton#toggleBeforeAfterButton:checked {
+    background-color: #3b82f6;
+    color: #ffffff;
+}
+QLabel#histogramBox {
+    background-color: #090f1d;
+    border: 1px solid #1c2944;
+    border-radius: 6px;
+}
+QProgressBar {
+    background-color: #09101f;
+    color: #e6ecf7;
+    border: 1px solid #243659;
+    border-radius: 5px;
+    text-align: center;
+    min-height: 18px;
+    font-size: 8.5pt;
+}
+QProgressBar::chunk {
+    background-color: #3b82f6;
+    border-radius: 4px;
+}
+QCheckBox {
+    color: #d4e0f5;
+    font-size: 9.5pt;
+    spacing: 6px;
+}
+
+/* Image Action Toolbar (Icon-Only di bawah gambar) */
+QFrame#imageActionToolbar {
+    background-color: #0b1220;
+    border: 1px solid #1c2944;
+    border-radius: 6px;
+    padding: 3px 6px;
+}
+QToolButton.imageActionButton {
+    background-color: transparent;
+    color: #e2e8f0;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    padding: 4px;
+    min-width: 30px;
+    min-height: 30px;
+    max-width: 30px;
+    max-height: 30px;
+}
+QToolButton.imageActionButton:hover {
+    background-color: #172542;
+    border: 1px solid #2e4470;
+}
+QToolButton.imageActionButton:pressed {
+    background-color: #0284c7;
+    border: 1px solid #38bdf8;
+}
+QToolButton.imageActionButton:checked {
+    background-color: #0369a1;
+    border: 1px solid #38bdf8;
+}
+QToolButton.imageActionButton:disabled {
+    background-color: transparent;
+    border: 1px solid transparent;
+}
+QToolButton.imageActionButton::menu-indicator {
+    image: none;
+    width: 0px;
+}
+
+/* Menu Dropdown Popup (Magnifier & Save) */
+QMenu {
+    background-color: #0b1220;
+    color: #e2e8f0;
+    border: 1px solid #2a3a5e;
+    border-radius: 6px;
+    padding: 4px 0px;
+}
+QMenu::item {
+    padding: 6px 20px 6px 14px;
+    font-size: 9pt;
+}
+QMenu::item:selected {
+    background-color: #1a2948;
+    color: #38bdf8;
+}
+QMenu::separator {
+    height: 1px;
+    background-color: #1c2944;
+    margin: 4px 8px;
+}
+
+/* Tooltip */
+QToolTip {
+    background-color: #0f172a;
+    color: #f8fafc;
+    border: 1px solid #38bdf8;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 8.5pt;
+}
+
 /* Status bar */
 QStatusBar {
     background-color: #0b1220;

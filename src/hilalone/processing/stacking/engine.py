@@ -326,12 +326,12 @@ class AutomaticStackingEngine:
         master_flat: np.ndarray | str | Path | None = None,
         excluded_frame_indices: set[int] | None = None,
         allow_exclude_incompatible_and_error: bool = False,
-        check_position_stability: bool = True,
-        confirm_proceed_with_shift_risk: bool = False,
+        check_position_stability: bool = False,
+        confirm_proceed_with_shift_risk: bool = True,
         progress_callback: ProgressCallback | None = None,
         cancel_check: CancelCheckCallback | None = None,
     ) -> StackingResult:
-        """Menjalankan validasi pra-stacking, pemeriksaan posisi, flat opsional, dan stacking.
+        """Menjalankan validasi pra-stacking, flat opsional, dan stacking langsung tanpa gate stabilitas posisi.
 
         Args:
             sequence_manager: Instance ``SequenceManager`` yang sedang aktif.
@@ -342,10 +342,8 @@ class AutomaticStackingEngine:
                 atau ``ERROR`` dikecualikan dengan catatan eksplisit. Bila ``False`` (default),
                 engine akan melempar ``StackingConfirmationRequiredError`` agar tidak ada frame
                 yang dilewati diam-diam.
-            check_position_stability: Bila ``True``, mengukur pergeseran translasi ``(dx, dy)``
-                terhadap frame referensi.
-            confirm_proceed_with_shift_risk: Bila ``True``, tetap melanjutkan stacking meskipun
-                terdapat frame dengan pergeseran > ambang atau ``INDETERMINATE`` (dengan peringatan).
+            check_position_stability: Parameter legasi (selalu False; gate stabilitas posisi dihapus).
+            confirm_proceed_with_shift_risk: Parameter legasi (selalu True; frame diproses langsung tanpa alignment).
             progress_callback: Callback progres ``(step, total, message)``.
             cancel_check: Callback pembatalan ``() -> bool``.
         """
@@ -404,11 +402,18 @@ class AutomaticStackingEngine:
                 expected_cfa_pattern=validation.cfa_pattern_str,
                 reference_bit_depth=ref_info.original_bit_depth if ref_info else None,
                 reference_orientation=ref_info.exif_orientation if ref_info else None,
+                reference_info=ref_info,
             )
             warnings.extend(flat_report.warnings)
             notes.append(
-                f"Kalibrasi Master Flat opsional diterapkan dari '{flat_report.source_description}' "
-                f"(rata-rata awal={flat_report.flat_mean_before_norm:.2f} dinormalisasi ke 1.0)."
+                f"Kalibrasi Master Flat opsional DITERAPKAN dari '{flat_report.source_description}' "
+                f"(format={flat_report.flat_format}, dimensi={flat_report.width}×{flat_report.height}, "
+                f"normalisasi={flat_report.normalization_method}, median awal={flat_report.flat_median_before_norm:.2f}, "
+                f"invalid pixels={flat_report.invalid_pixel_count})."
+            )
+        else:
+            notes.append(
+                "Kalibrasi Master Flat: TIDAK DITERAPKAN (Opsi Kalibrasi Flat tidak diaktifkan / Master Flat tidak disediakan)."
             )
 
         # Helper untuk memuat satu frame ilmiah ke float32 (beserta flat bila aktif)
@@ -433,35 +438,11 @@ class AutomaticStackingEngine:
             is_cfa, _ = extract_frame_cfa_info(loaded.info)
             return arr_f32, loaded.info.file_name, is_cfa
 
-        # 3. Pemeriksaan Stabilitas Posisi (baca-saja)
-        stability_report = None
-        if check_position_stability:
-            _notify_progress(
-                progress_callback,
-                0,
-                len(included_indices) * 2,
-                "Memeriksa stabilitas posisi frame terhadap frame referensi...",
-            )
-            stability_report = measure_sequence_position_stability(
-                tuple(included_indices),
-                _load_frame_f32,
-                reference_frame_index=validation.reference_frame_index,
-                threshold_px=self._shift_threshold_px,
-            )
-            validation = replace(validation, stability_report=stability_report)
-            warnings.extend(stability_report.warnings)
-
-            if stability_report.has_warnings and not confirm_proceed_with_shift_risk:
-                shift_msgs = "\n".join(f"• {w}" for w in stability_report.warnings[:6])
-                raise StackingConfirmationRequiredError(
-                    "Pemeriksaan stabilitas posisi mendeteksi pergeseran melebihi ambang "
-                    f"({self._shift_threshold_px:.2f} px) atau status INDETERMINATE:\n"
-                    f"{shift_msgs}\n\n"
-                    "Karena image registration/alignment dilarang pada MVP 1.0, melanjutkan stacking "
-                    "berisiko menimbulkan blur pada sabit hilal. Konfirmasi "
-                    "confirm_proceed_with_shift_risk=True untuk tetap melanjutkan atau kecualikan "
-                    "frame yang bergeser."
-                )
+        # 3. Kestabilan Posisi: Dinonaktifkan sesuai keputusan pengguna (MVP 1.0)
+        # Seluruh frame diproses langsung tanpa pengukuran pergeseran dan tanpa alignment geometris.
+        notes.append("Position stability precheck: DISABLED (seluruh frame diproses langsung tanpa gate stabilitas posisi).")
+        notes.append("Registration/alignment: NOT PERFORMED (aturan ilmiah MVP 1.0 tanpa pergeseran geometris/translasi piksel).")
+        notes.append("Flat compatibility preflight: DISABLED (evaluasi kompatibilitas dimensi terjadi saat operasi pembagian).")
 
         n_active = len(included_indices)
         height = validation.height
@@ -657,8 +638,8 @@ def run_stacking_on_sequence(
     master_flat: np.ndarray | str | Path | None = None,
     excluded_frame_indices: set[int] | None = None,
     allow_exclude_incompatible_and_error: bool = False,
-    check_position_stability: bool = True,
-    confirm_proceed_with_shift_risk: bool = False,
+    check_position_stability: bool = False,
+    confirm_proceed_with_shift_risk: bool = True,
     max_working_memory_mb: int = 128,
     shift_threshold_px: float = DEFAULT_SHIFT_THRESHOLD_PX,
     progress_callback: ProgressCallback | None = None,

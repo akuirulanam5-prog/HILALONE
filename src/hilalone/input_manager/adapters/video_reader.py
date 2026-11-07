@@ -524,9 +524,13 @@ class VideoSession:
                 warnings=tuple(warnings),
             )
 
-            # Kembalikan posisi container ke awal untuk lazy decoding on-demand
-            container.seek(0)
-            self._container = container
+            # Tutup container inspeksi/demux dan buka container baru yang bersih dari byte 0
+            # untuk menghindari rusaknya palette / stream extradata context FFmpeg pada format AVI (mis. pal8 / rawvideo)
+            try:
+                container.close()
+            except Exception:
+                pass
+            self._container = av.open(str(self._path), mode="r")
             self._decode_iter = None
             self._last_decoded_index = -1
             return meta, tuple(entries)
@@ -546,7 +550,13 @@ class VideoSession:
             self._cache.popitem(last=False)
 
     def _reset_decoder_to_start(self) -> None:
-        self._container.seek(0)
+        """Mengatur ulang dekoder ke awal video secara bersih tanpa merusak konteks palette/ekstradata."""
+        if self._container is not None:
+            try:
+                self._container.close()
+            except Exception:
+                pass
+        self._container = av.open(str(self._path), mode="r")
         self._decode_iter = self._container.decode(video=self._stream_index)
         self._last_decoded_index = -1
 
