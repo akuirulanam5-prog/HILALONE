@@ -47,6 +47,13 @@ def _estimate_high_freq_noise_sigma(arr_2d: np.ndarray) -> float:
         med = float(np.median(finite))
         return float(np.median(np.abs(finite - med))) * 1.4826
 
+    # Subsampling jika citra berukuran besar (> 500x500) agar evaluasi metrik berlangsung real-time (< 25 ms)
+    h, w = finite.shape
+    if h > 500 or w > 500:
+        sy = max(1, h // 400)
+        sx = max(1, w // 400)
+        finite = finite[::sy, ::sx]
+
     # Selisih orde dua horizontal & vertikal untuk mengisolasi derau piksel-ke-piksel dari gradien
     diff_h = finite[:, 2:] - 2.0 * finite[:, 1:-1] + finite[:, :-2]
     diff_v = finite[2:, :] - 2.0 * finite[1:-1, :] + finite[:-2, :]
@@ -62,6 +69,9 @@ def _estimate_local_contrast_metric(arr_2d: np.ndarray) -> float:
     finite = arr_2d[np.isfinite(arr_2d)]
     if finite.size < 4:
         return 0.0
+    if finite.size > 100000:
+        stride = max(1, finite.size // 50000)
+        finite = finite[::stride]
     return float(np.percentile(finite, 90.0) - np.percentile(finite, 10.0))
 
 
@@ -93,10 +103,10 @@ def _apply_clahe_2d_unit(
 
     kernel_size = _compute_tile_kernel_size(height, width, kernel_tiles)
     eff_clip = float(np.clip(clip_limit, 0.001, 0.25))
-    eff_bins = int(np.clip(nbins, 32, 1024))
+    eff_bins = int(np.clip(nbins, 32, 128))
 
     out = equalize_adapthist(
-        np.clip(unit_2d, 0.0, 1.0).astype(np.float64),
+        np.clip(unit_2d, 0.0, 1.0),
         kernel_size=kernel_size,
         clip_limit=eff_clip,
         nbins=eff_bins,
@@ -240,9 +250,15 @@ def run_image_enhancement(
         )
 
     # Salinan kerja ternormalisasi [0.0, 1.0]; piksel NaN diisi median sementara selama CLAHE
-    med_valid = float(np.median(valid_vals))
-    safe_work = np.where(finite_mask, work, med_valid)
-    unit_work = np.clip((safe_work - w_min) / span, 0.0, 1.0).astype(np.float32)
+    if np.all(finite_mask):
+        unit_work = np.clip((work - w_min) / span, 0.0, 1.0).astype(np.float32)
+    else:
+        if valid_vals.size > 100000:
+            med_valid = float(np.median(valid_vals[::valid_vals.size // 50000]))
+        else:
+            med_valid = float(np.median(valid_vals))
+        safe_work = np.where(finite_mask, work, med_valid)
+        unit_work = np.clip((safe_work - w_min) / span, 0.0, 1.0).astype(np.float32)
 
     if unit_work.ndim == 2:
         lum_before = unit_work

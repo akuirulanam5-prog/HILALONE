@@ -1,5 +1,42 @@
+# Virtual Environment & Cache Python
 .venv/
+venv/
+env/
 __pycache__/
-.pytest_cache/
 *.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Testing & Coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Artefak Build & Distribusi Executable Windows
+build/
+dist/
+release/
+*.manifest
+*.log
+
+# Keluaran Uji & Direktori Sementara
 outputs/
+bundle_verify_out/
+HILALONE_TEST/
+HILALONE_TEST_OUT/
+*.tmp
+*.bak
+
+# Direktori Ekstensi / Agent Lokal & IDE
+.agents/
+.vscode/
+.idea/
+
+# Berkas Sistem Operasi
+.DS_Store
+Thumbs.db
+Desktop.ini

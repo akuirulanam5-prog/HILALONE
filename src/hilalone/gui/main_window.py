@@ -9,13 +9,17 @@ from __future__ import annotations
 
 from pathlib import Path
 import math
+import os
+import time
 from typing import Any, Iterable
 
-from PySide6.QtCore import QEventLoop, QSize, Qt
-from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtCore import QEventLoop, QSettings, QSize, Qt
+from PySide6.QtGui import QAction, QPixmap, QTransform
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -24,11 +28,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMenu,
+    QMenuBar,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -37,12 +43,19 @@ from PySide6.QtWidgets import (
 import numpy as np
 
 from hilalone import APP_NAME, APP_SUBTITLE
-from hilalone.gui.icons import create_vector_icon
+from hilalone.gui.accordion import AccordionGroup, AccordionHeader, AccordionSection
+from hilalone.gui.console_panel import ConsoleLogPanel, LogEntry, LogLevel, LogManager
+from hilalone.gui.curves_window import CurvesWindow, apply_curve_lut_to_array, apply_curve_lut_to_pixmap
+from hilalone.gui.histogram_window import HistogramWindow
+from hilalone.gui.icons import create_themed_vector_icon, create_vector_icon
 from hilalone.gui.image_viewer import ImageViewer
+from hilalone.gui.info_dialog import ImageInformationDialog
 from hilalone.gui.pipeline_worker import PipelineWorker
-from hilalone.gui.resources import get_app_icon, get_header_logo_pixmap
+from hilalone.gui.resources import get_app_icon, get_header_logo_pixmap, get_user_config_path
 from hilalone.gui.stacking_worker import StackingWorker
 from hilalone.gui.state_manager import ProcessingState, ProcessingStateManager
+from hilalone.gui.styles import ThemeMode, get_theme_stylesheet
+from hilalone.gui.top_panels import FrameListPanel, ImageInfoPanel, OpenImagePanel
 from hilalone.input_manager.adapters.fits_reader import (
     UNAVAILABLE_TEXT as FITS_UNAVAILABLE,
     FitsHduSummary,
@@ -501,7 +514,7 @@ class MainWindow(QMainWindow):
         app_icon = get_app_icon()
         if not app_icon.isNull():
             self.setWindowIcon(app_icon)
-        self.resize(1200, 800)
+        self.resize(1366, 768)
         self.setMinimumSize(800, 560)
         self._last_dir: str = str(Path.home())
         self._info_keys: dict[str, QLabel] = {}
@@ -525,14 +538,73 @@ class MainWindow(QMainWindow):
         self._last_allow_exclude_invalid: bool = False
         self._cancel_requested_by_ui: bool = False
         self._current_file_name: str = ""
+        self._current_info: ImageInfo | None = None
         self.state_manager = ProcessingStateManager(parent=self)
         self.state_manager.state_changed.connect(self._on_processing_state_changed)
+
+        # Logging, Theme, Metadata, & Windows baru
+        self.log_manager = LogManager(self)
+        self._is_night_vision: bool = False
+        self._custom_metadata: dict[str, tuple[str, str]] = {}
+        self._selected_frame_indices: list[int] = []
+        self.histogram_window: HistogramWindow | None = None
+        self.curves_window: CurvesWindow | None = None
+        self.info_dialog: ImageInformationDialog | None = None
+        self._curves_backup_qimage: Any = None
+        self._curves_backup_scientific_data: np.ndarray | None = None
+        self._active_original_qimage: Any = None
+        self._original_unprocessed_qimage: Any = None
+        self._on_the_fly_previews: dict[PreviewMode, Any] = {}
 
         self._build_ui()
         self.viewer.roi_selected.connect(self._on_roi_selected_from_viewer)
         self.viewer.zoom_changed.connect(self._on_viewer_zoom_changed)
         self.viewer.pixel_hovered.connect(self._on_viewer_pixel_hovered)
+        self.viewer.image_changed.connect(self._refresh_image_toolbar_state)
+        self._apply_theme_to_widgets(self._is_night_vision)
+        self._load_user_preferences()
         self.close_image()
+
+    def _preferences_enabled(self) -> bool:
+        """Menghindari pembacaan/penulisan config desktop global saat pengujian pytest berjalan."""
+        return "PYTEST_CURRENT_TEST" not in os.environ
+
+    def _load_user_preferences(self, config_path: Path | None = None) -> None:
+        """Memuat preferensi pengguna (tema & direktori terakhir) dari folder lokal pengguna Windows."""
+        if config_path is None and not self._preferences_enabled():
+            return
+        try:
+            cfg = config_path if config_path is not None else get_user_config_path()
+            if not cfg.exists():
+                return
+            settings = QSettings(str(cfg), QSettings.Format.IniFormat)
+            saved_dir = str(settings.value("ui/last_dir", "") or "").strip()
+            if saved_dir and Path(saved_dir).is_dir():
+                self._last_dir = saved_dir
+            night_raw = settings.value("ui/night_vision", False)
+            night_active = (
+                night_raw
+                if isinstance(night_raw, bool)
+                else str(night_raw).strip().lower() in {"1", "true", "yes", "on"}
+            )
+            if night_active != self._is_night_vision:
+                self.toggle_night_vision_theme(night_active, persist=False)
+        except Exception:
+            pass
+
+    def _save_user_preferences(self, config_path: Path | None = None) -> None:
+        """Menyimpan preferensi tema dan direktori kerja terakhir ke folder konfigurasi pengguna."""
+        if config_path is None and not self._preferences_enabled():
+            return
+        try:
+            cfg = config_path if config_path is not None else get_user_config_path()
+            cfg.parent.mkdir(parents=True, exist_ok=True)
+            settings = QSettings(str(cfg), QSettings.Format.IniFormat)
+            settings.setValue("ui/night_vision", bool(self._is_night_vision))
+            settings.setValue("ui/last_dir", str(self._last_dir))
+            settings.sync()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
@@ -541,32 +613,231 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         root = QVBoxLayout(central)
-        root.setContentsMargins(20, 16, 20, 8)
-        root.setSpacing(10)
+        root.setContentsMargins(16, 10, 16, 8)
+        root.setSpacing(8)
 
+        # 1. Header (Logo, Judul, Tombol Cepat)
         root.addLayout(self._build_header())
         line = QFrame()
         line.setObjectName("headerLine")
         line.setFrameShape(QFrame.Shape.NoFrame)
         root.addWidget(line)
-        root.addLayout(self._build_toolbar())
-        root.addWidget(self._build_sequence_nav_bar())
 
-        body = QHBoxLayout()
-        body.setSpacing(16)
+        # 2. Tiga Panel Utama Sejajar (Panel A: Open Image, Panel B: Frame List, Panel C: Image Information)
+        self.top_panels_widget = QWidget()
+        self.top_panels_widget.setObjectName("topPanelsContainer")
+        top_panels_row = QHBoxLayout(self.top_panels_widget)
+        top_panels_row.setContentsMargins(0, 0, 0, 0)
+        top_panels_row.setSpacing(10)
 
-        viewer_column = QVBoxLayout()
-        viewer_column.setSpacing(6)
+        self.panel_a = OpenImagePanel(self)
+        self.panel_b = FrameListPanel(self)
+        self.panel_c = ImageInfoPanel(self)
+
+        top_panels_row.addWidget(self.panel_a, 2)
+        top_panels_row.addWidget(self.panel_b, 5)
+        top_panels_row.addWidget(self.panel_c, 3)
+        root.addWidget(self.top_panels_widget)
+
+        # Sembunyikan Panel A, B, C secara default agar area kerja utama bersih dan lapang
+        self.top_panels_widget.setVisible(False)
+        self.panel_a.setVisible(False)
+        self.panel_b.setVisible(False)
+        self.panel_c.setVisible(False)
+
+        # Sambungkan sinyal Panel A (impor) & referensi tombol kompatibilitas
+        self.open_button = self.panel_a.btn_open_single
+        self.open_multi_button = self.panel_a.btn_open_multi
+        self.open_folder_button = self.panel_a.btn_open_folder
+        self.open_video_button = self.panel_a.btn_open_video
+        self.open_ser_button = self.panel_a.btn_open_ser
+        self.close_button = self.panel_a.btn_close
+
+        self.open_button.clicked.connect(self.open_image_dialog)
+        self.open_multi_button.clicked.connect(self.open_multiple_images_dialog)
+        self.open_folder_button.clicked.connect(self.open_folder_sequence_dialog)
+        self.open_video_button.clicked.connect(self.open_video_dialog)
+        self.open_ser_button.clicked.connect(self.open_ser_dialog)
+        self.close_button.clicked.connect(self.close_image)
+
+        # Sambungkan sinyal Panel B & C
+        self.panel_b.frame_activated.connect(self._on_frame_list_activated)
+        self.panel_b.selection_changed.connect(self._on_frame_selection_changed)
+        self.panel_c.open_dialog_requested.connect(self.open_image_information_dialog)
+
+        # Komponen navigasi bar kompatibilitas (hidden / background sync)
+        self.nav_bar = self._build_sequence_nav_bar()
+        self.nav_bar.setVisible(False)
+
+        # 3. Main Workspace Body (Viewer + Minimal Processing Sidebar)
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_splitter.setChildrenCollapsible(False)
+
+        viewer_column = QWidget()
+        v_col_layout = QVBoxLayout(viewer_column)
+        v_col_layout.setContentsMargins(0, 0, 0, 0)
+        v_col_layout.setSpacing(6)
+
         self.viewer = ImageViewer()
         self.image_action_toolbar = self._build_image_action_toolbar()
-        viewer_column.addWidget(self.viewer, 1)
-        viewer_column.addWidget(self.image_action_toolbar, 0)
+        v_col_layout.addWidget(self.viewer, 1)
+        v_col_layout.addWidget(self.image_action_toolbar, 0)
 
-        body.addLayout(viewer_column, 1)
-        body.addWidget(self._build_info_panel(), 0)
-        root.addLayout(body, 1)
+        main_splitter.addWidget(viewer_column)
+        self.info_panel_widget = self._build_info_panel()
+        main_splitter.addWidget(self.info_panel_widget)
+        main_splitter.setStretchFactor(0, 68)
+        main_splitter.setStretchFactor(1, 32)
+        main_splitter.setSizes([910, 430])
+
+        root.addWidget(main_splitter, 1)
+
+        # 4. Console / Processing Log Panel di bagian bawah (tertutup secara default agar ruang viewer lega)
+        self.console_panel = ConsoleLogPanel(self.log_manager, parent=self)
+        self.console_panel.setVisible(False)
+        self.console_panel.toggle_hide_btn.clicked.connect(lambda: self.toggle_console_panel(False))
+        root.addWidget(self.console_panel, 0)
 
         self._setup_status_bar()
+        self._build_menu_bar()
+
+    def _build_menu_bar(self) -> None:
+        """Membangun Top Navigation Bar dengan menu dropdown ala Siril."""
+        menu_bar = self.menuBar()
+        menu_bar.clear()
+
+        # 1. Menu OPEN IMAGE / FILE
+        menu_open = menu_bar.addMenu("Open Image")
+
+        act_single = menu_open.addAction("Open Single Image...")
+        act_single.setShortcut("Ctrl+O")
+        act_single.triggered.connect(self.open_image_dialog)
+
+        act_multi = menu_open.addAction("Multiple Images...")
+        act_multi.setShortcut("Ctrl+M")
+        act_multi.triggered.connect(self.open_multiple_images_dialog)
+
+        act_folder = menu_open.addAction("Open Folder Sequence...")
+        act_folder.triggered.connect(self.open_folder_sequence_dialog)
+
+        act_video = menu_open.addAction("Open Video (.AVI, .MP4, .MOV)...")
+        act_video.triggered.connect(self.open_video_dialog)
+
+        act_ser = menu_open.addAction("Open SER Astronomy Video...")
+        act_ser.triggered.connect(self.open_ser_dialog)
+
+        menu_open.addSeparator()
+        act_close = menu_open.addAction("Close Image")
+        act_close.setShortcut("Ctrl+W")
+        act_close.triggered.connect(self.close_image)
+
+        menu_open.addSeparator()
+        act_exit = menu_open.addAction("Keluar")
+        act_exit.setShortcut("Ctrl+Q")
+        act_exit.triggered.connect(self.close)
+
+        # 2. Menu IMAGE PROCESSING
+        menu_proc = menu_bar.addMenu("Image Processing")
+
+        act_auto = menu_proc.addAction("Mulai Pemrosesan Otomatis")
+        act_auto.triggered.connect(self._on_start_auto_process_clicked)
+
+        menu_proc.addSeparator()
+
+        act_flat_info = menu_proc.addAction("Informasi Kalibrasi Flat-Field...")
+        act_flat_info.triggered.connect(self.show_flat_info_dialog)
+
+        act_proc_curves = menu_proc.addAction("Transformasi Kurva (Curves Adjustment)...")
+        act_proc_curves.triggered.connect(self.open_curves_window)
+
+        # 3. Menu TOOLS
+        menu_tools = menu_bar.addMenu("Tools")
+
+        act_info_dlg = menu_tools.addAction("Image Information && Metadata Editor (FITS Header)...")
+        act_info_dlg.setShortcut("F2")
+        act_info_dlg.triggered.connect(self.open_image_information_dialog)
+
+        act_hist = menu_tools.addAction("Histogram && Image Statistics...")
+        act_hist.setShortcut("F3")
+        act_hist.triggered.connect(self.open_histogram_window)
+
+        act_curves = menu_tools.addAction("Kurva / Curves Transformation...")
+        act_curves.setShortcut("F4")
+        act_curves.triggered.connect(self.open_curves_window)
+
+        self.act_console_log = menu_tools.addAction("Console / Processing Log")
+        self.act_console_log.setShortcut("F5")
+        self.act_console_log.setCheckable(True)
+        self.act_console_log.setChecked(False)
+        self.act_console_log.triggered.connect(self.toggle_console_panel)
+
+        menu_tools.addSeparator()
+
+        self.act_night_vision = menu_tools.addAction("Night Vision Red Theme")
+        self.act_night_vision.setCheckable(True)
+        self.act_night_vision.setChecked(False)
+        self.act_night_vision.triggered.connect(self.toggle_night_vision_theme)
+
+        # 4. Menu VIEW
+        menu_view = menu_bar.addMenu("View")
+
+        act_fit = menu_view.addAction("Fit the Image")
+        act_fit.triggered.connect(self.viewer.fit_to_viewport)
+
+        act_1to1 = menu_view.addAction("Original Size (1:1)")
+        act_1to1.triggered.connect(self.viewer.set_original_size)
+
+        act_zin = menu_view.addAction("Zoom In")
+        act_zin.setShortcut("Ctrl++")
+        act_zin.triggered.connect(lambda: self.viewer.zoom_in())
+
+        act_zout = menu_view.addAction("Zoom Out")
+        act_zout.setShortcut("Ctrl+-")
+        act_zout.triggered.connect(lambda: self.viewer.zoom_out())
+
+        menu_view.addSeparator()
+
+        act_rot_ccw = menu_view.addAction("Rotate 90° CCW (Berlawanan Jarum Jam)")
+        act_rot_ccw.triggered.connect(self.rotate_image_ccw)
+
+        act_rot_cw = menu_view.addAction("Rotate 90° CW (Searah Jarum Jam)")
+        act_rot_cw.triggered.connect(self.rotate_image_cw)
+
+        act_flip_h = menu_view.addAction("Flip Horizontal (Balik Kiri-Kanan)")
+        act_flip_h.triggered.connect(self.flip_image_horizontal)
+
+        act_flip_v = menu_view.addAction("Flip Vertical (Balik Atas-Bawah)")
+        act_flip_v.triggered.connect(self.flip_image_vertical)
+
+        menu_view.addSeparator()
+        self.act_toggle_top_panels = menu_view.addAction("Tampilkan Panel Input (Panel A, B, C)")
+        self.act_toggle_top_panels.setCheckable(True)
+        self.act_toggle_top_panels.setChecked(False)
+        self.act_toggle_top_panels.toggled.connect(self._set_top_panels_visible)
+
+        self.act_toggle_console = menu_view.addAction("Tampilkan Console / Log")
+        self.act_toggle_console.setCheckable(True)
+        self.act_toggle_console.setChecked(False)
+        self.act_toggle_console.triggered.connect(self.toggle_console_panel)
+
+        menu_view.addSeparator()
+        act_reset_layout = menu_view.addAction("Reset Layout Jendela")
+        act_reset_layout.triggered.connect(lambda: self.resize(1366, 768))
+
+    def _set_top_panels_visible(self, visible: bool) -> None:
+        """Menampilkan atau menyembunyikan kontainer Panel A, B, C."""
+        if hasattr(self, "top_panels_widget"):
+            self.top_panels_widget.setVisible(visible)
+        if hasattr(self, "panel_a"):
+            self.panel_a.setVisible(visible)
+        if hasattr(self, "panel_b"):
+            self.panel_b.setVisible(visible)
+        if hasattr(self, "panel_c"):
+            self.panel_c.setVisible(visible)
+        if hasattr(self, "act_toggle_top_panels"):
+            self.act_toggle_top_panels.blockSignals(True)
+            self.act_toggle_top_panels.setChecked(visible)
+            self.act_toggle_top_panels.blockSignals(False)
 
     def _build_header(self) -> QHBoxLayout:
         header_layout = QHBoxLayout()
@@ -596,46 +867,70 @@ class MainWindow(QMainWindow):
 
         header_layout.addLayout(text_layout)
         header_layout.addStretch(1)
+
+        # Tombol Aksi Cepat di Header Kanan (Night Vision, Histogram, Console Log)
+        self.btn_quick_night_vision = QPushButton("Night Vision")
+        self.btn_quick_night_vision.setObjectName("secondaryButton")
+        self.btn_quick_night_vision.setIcon(create_vector_icon("moon", size=16))
+        self.btn_quick_night_vision.setIconSize(QSize(16, 16))
+        self.btn_quick_night_vision.setCheckable(True)
+        self.btn_quick_night_vision.setChecked(False)
+        self.btn_quick_night_vision.setMinimumHeight(32)
+        self.btn_quick_night_vision.setToolTip("Toggle Night Vision Red Theme untuk lingkungan malam")
+        self.btn_quick_night_vision.clicked.connect(self.toggle_night_vision_theme)
+        header_layout.addWidget(self.btn_quick_night_vision)
+
+        self.btn_quick_histogram = QPushButton("Histogram")
+        self.btn_quick_histogram.setObjectName("secondaryButton")
+        self.btn_quick_histogram.setIcon(create_vector_icon("bar-chart-2", size=16))
+        self.btn_quick_histogram.setIconSize(QSize(16, 16))
+        self.btn_quick_histogram.setMinimumHeight(32)
+        self.btn_quick_histogram.setToolTip("Buka jendela analisis Histogram & Statistik Citra [F3]")
+        self.btn_quick_histogram.clicked.connect(self.open_histogram_window)
+        header_layout.addWidget(self.btn_quick_histogram)
+
+        self.btn_quick_curves = QPushButton("Kurva")
+        self.btn_quick_curves.setObjectName("secondaryButton")
+        self.btn_quick_curves.setIcon(create_vector_icon("trending-up", size=16))
+        self.btn_quick_curves.setIconSize(QSize(16, 16))
+        self.btn_quick_curves.setMinimumHeight(32)
+        self.btn_quick_curves.setToolTip("Buka jendela Transformasi Kurva untuk mengatur kontras secara manual [F4]")
+        self.btn_quick_curves.clicked.connect(self.open_curves_window)
+        header_layout.addWidget(self.btn_quick_curves)
+
+        self.btn_quick_info = QPushButton("Info")
+        self.btn_quick_info.setObjectName("secondaryButton")
+        self.btn_quick_info.setIcon(create_vector_icon("info", size=16))
+        self.btn_quick_info.setIconSize(QSize(16, 16))
+        self.btn_quick_info.setMinimumHeight(32)
+        self.btn_quick_info.setToolTip("Buka Image Information & Metadata Editor (FITS Header) [F2]")
+        self.btn_quick_info.clicked.connect(self.open_image_information_dialog)
+        header_layout.addWidget(self.btn_quick_info)
+
+        self.btn_quick_console = QPushButton("Console Log")
+        self.btn_quick_console.setObjectName("secondaryButton")
+        self.btn_quick_console.setIcon(create_vector_icon("terminal", size=16))
+        self.btn_quick_console.setIconSize(QSize(16, 16))
+        self.btn_quick_console.setCheckable(True)
+        self.btn_quick_console.setChecked(False)
+        self.btn_quick_console.setMinimumHeight(32)
+        self.btn_quick_console.setToolTip("Tampilkan atau sembunyikan Console / Processing Log")
+        self.btn_quick_console.clicked.connect(self.toggle_console_panel)
+        header_layout.addWidget(self.btn_quick_console)
+
         return header_layout
 
     def _build_toolbar(self) -> QHBoxLayout:
+        """Toolbar kompatibilitas internal (menggunakan tombol pada Panel A)."""
         layout = QHBoxLayout()
         layout.setSpacing(10)
-
-        self.open_button = QPushButton("Open Image")
-        self.open_button.setToolTip("Buka satu gambar (Single Image – tanpa stacking)")
-        self.open_button.clicked.connect(self.open_image_dialog)
-
-        self.open_multi_button = QPushButton("Multiple Images")
-        self.open_multi_button.setObjectName("secondaryButton")
-        self.open_multi_button.setToolTip("Pilih beberapa file gambar sekaligus (Stacking wajib)")
-        self.open_multi_button.clicked.connect(self.open_multiple_images_dialog)
-
-        self.open_folder_button = QPushButton("Open Folder Sequence")
-        self.open_folder_button.setObjectName("secondaryButton")
-        self.open_folder_button.setToolTip("Buka seluruh gambar yang didukung dari satu folder")
-        self.open_folder_button.clicked.connect(self.open_folder_sequence_dialog)
-
-        self.open_video_button = QPushButton("Video")
-        self.open_video_button.setObjectName("secondaryButton")
-        self.open_video_button.setToolTip("Buka berkas video (.MP4, .MOV, .AVI)")
-        self.open_video_button.clicked.connect(self.open_video_dialog)
-
-        self.open_ser_button = QPushButton("SER")
-        self.open_ser_button.setObjectName("secondaryButton")
-        self.open_ser_button.setToolTip("Buka berkas video astronomi SER (.SER)")
-        self.open_ser_button.clicked.connect(self.open_ser_dialog)
-
-        self.close_button = QPushButton("Close Image")
-        self.close_button.setObjectName("secondaryButton")
-        self.close_button.clicked.connect(self.close_image)
-
-        layout.addWidget(self.open_button)
-        layout.addWidget(self.open_multi_button)
-        layout.addWidget(self.open_folder_button)
-        layout.addWidget(self.open_video_button)
-        layout.addWidget(self.open_ser_button)
-        layout.addWidget(self.close_button)
+        if hasattr(self, "panel_a"):
+            layout.addWidget(self.panel_a.btn_open_single)
+            layout.addWidget(self.panel_a.btn_open_multi)
+            layout.addWidget(self.panel_a.btn_open_folder)
+            layout.addWidget(self.panel_a.btn_open_video)
+            layout.addWidget(self.panel_a.btn_open_ser)
+            layout.addWidget(self.panel_a.btn_close)
         layout.addStretch(1)
         return layout
 
@@ -648,15 +943,19 @@ class MainWindow(QMainWindow):
         lbl = QLabel("Daftar Frame:")
         lbl.setObjectName("infoKey")
 
-        self.prev_frame_button = QPushButton("◀ Sebelumnya")
+        self.prev_frame_button = QPushButton("Sebelumnya")
         self.prev_frame_button.setObjectName("secondaryButton")
+        self.prev_frame_button.setIcon(create_vector_icon("chevron-left", size=14))
+        self.prev_frame_button.setIconSize(QSize(14, 14))
         self.prev_frame_button.clicked.connect(self.show_previous_frame)
 
         self.frame_combo = QComboBox()
         self.frame_combo.currentIndexChanged.connect(self._on_frame_combo_changed)
 
-        self.next_frame_button = QPushButton("Berikutnya ▶")
+        self.next_frame_button = QPushButton("Berikutnya")
         self.next_frame_button.setObjectName("secondaryButton")
+        self.next_frame_button.setIcon(create_vector_icon("chevron-right", size=14))
+        self.next_frame_button.setIconSize(QSize(14, 14))
         self.next_frame_button.clicked.connect(self.show_next_frame)
 
         layout.addWidget(lbl)
@@ -712,7 +1011,7 @@ class MainWindow(QMainWindow):
         self.zoom_out_button.setIcon(create_vector_icon("zoom-out"))
         self.zoom_out_button.setIconSize(QSize(20, 20))
         self.zoom_out_button.setToolTip("Zoom Out / Perkecil (Klik atau putar mouse wheel ke bawah)")
-        self.zoom_out_button.clicked.connect(self.viewer.zoom_out)
+        self.zoom_out_button.clicked.connect(lambda: self.viewer.zoom_out())
 
         # 3. zoom-in — Zoom In
         self.zoom_in_button = QToolButton()
@@ -720,7 +1019,7 @@ class MainWindow(QMainWindow):
         self.zoom_in_button.setIcon(create_vector_icon("zoom-in"))
         self.zoom_in_button.setIconSize(QSize(20, 20))
         self.zoom_in_button.setToolTip("Zoom In / Perbesar (Klik atau putar mouse wheel ke atas)")
-        self.zoom_in_button.clicked.connect(self.viewer.zoom_in)
+        self.zoom_in_button.clicked.connect(lambda: self.viewer.zoom_in())
 
         # 4. scan — Fit the Image
         self.fit_image_button = QToolButton()
@@ -742,11 +1041,60 @@ class MainWindow(QMainWindow):
         )
         self.original_size_button.clicked.connect(self.viewer.set_original_size)
 
+        # 6. rotate-ccw — Putar 90° Berlawanan Jarum Jam
+        self.rotate_ccw_button = QToolButton()
+        self.rotate_ccw_button.setProperty("class", "imageActionButton")
+        self.rotate_ccw_button.setIcon(create_vector_icon("rotate-ccw"))
+        self.rotate_ccw_button.setIconSize(QSize(20, 20))
+        self.rotate_ccw_button.setToolTip("Putar 90° Berlawanan Jarum Jam (Rotate 90° CCW)")
+        self.rotate_ccw_button.clicked.connect(self.rotate_image_ccw)
+
+        # 7. rotate-cw — Putar 90° Searah Jarum Jam
+        self.rotate_cw_button = QToolButton()
+        self.rotate_cw_button.setProperty("class", "imageActionButton")
+        self.rotate_cw_button.setIcon(create_vector_icon("rotate-cw"))
+        self.rotate_cw_button.setIconSize(QSize(20, 20))
+        self.rotate_cw_button.setToolTip("Putar 90° Searah Jarum Jam (Rotate 90° CW)")
+        self.rotate_cw_button.clicked.connect(self.rotate_image_cw)
+
+        # 8. flip-horizontal — Balik Horizontal
+        self.flip_horizontal_button = QToolButton()
+        self.flip_horizontal_button.setProperty("class", "imageActionButton")
+        self.flip_horizontal_button.setIcon(create_vector_icon("flip-horizontal"))
+        self.flip_horizontal_button.setIconSize(QSize(20, 20))
+        self.flip_horizontal_button.setToolTip("Balik Citra Horizontal (Flip Horizontal / Mirror Kiri-Kanan)")
+        self.flip_horizontal_button.clicked.connect(self.flip_image_horizontal)
+
+        # 9. flip-vertical — Balik Vertikal
+        self.flip_vertical_button = QToolButton()
+        self.flip_vertical_button.setProperty("class", "imageActionButton")
+        self.flip_vertical_button.setIcon(create_vector_icon("flip-vertical"))
+        self.flip_vertical_button.setIconSize(QSize(20, 20))
+        self.flip_vertical_button.setToolTip("Balik Citra Vertikal (Flip Vertical / Mirror Atas-Bawah)")
+        self.flip_vertical_button.clicked.connect(self.flip_image_vertical)
+
+        # 10. negative-view — Switch Normal & Negative View
+        self.negative_view_button = QToolButton()
+        self.negative_view_button.setProperty("class", "imageActionButton")
+        self.negative_view_button.setIcon(create_vector_icon("negative-view"))
+        self.negative_view_button.setIconSize(QSize(20, 20))
+        self.negative_view_button.setCheckable(True)
+        self.negative_view_button.setChecked(False)
+        self.negative_view_button.setToolTip(
+            "Switch Normal / Negative View (Balik Tampilan Intensitas Citra)"
+        )
+        self.negative_view_button.toggled.connect(self._on_negative_view_toggled)
+
         layout.addWidget(self.magnifier_button)
         layout.addWidget(self.zoom_out_button)
         layout.addWidget(self.zoom_in_button)
         layout.addWidget(self.fit_image_button)
         layout.addWidget(self.original_size_button)
+        layout.addWidget(self.rotate_ccw_button)
+        layout.addWidget(self.rotate_cw_button)
+        layout.addWidget(self.flip_horizontal_button)
+        layout.addWidget(self.flip_vertical_button)
+        layout.addWidget(self.negative_view_button)
 
         layout.addStretch(1)
 
@@ -822,6 +1170,519 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(self.status_zoom_info)
         sb.addPermanentWidget(self.status_pixel_info)
 
+    # ------------------------------------------------------------------ REDESIGN HANDLERS & WINDOWS
+    def _on_frame_list_activated(self, index: int) -> None:
+        """Dipanggil saat pengguna mengklik atau menekan enter pada item di Frame List Panel (Panel B)."""
+        if 0 <= index < self.sequence_manager.frame_count:
+            self.select_sequence_frame(index)
+
+    def _on_frame_selection_changed(self, selected_indices: list[int]) -> None:
+        """Dipanggil saat status checkbox frame di Panel B berubah."""
+        t0 = time.perf_counter()
+        self._selected_frame_indices = list(selected_indices)
+        total = self.sequence_manager.frame_count
+        dt = time.perf_counter() - t0
+        if total > 0:
+            self.log_manager.info(
+                "FRAME_SELECTION",
+                "Seleksi Frame Diperbarui",
+                f"{len(selected_indices)} dari {total} frame dipilih untuk pemrosesan | Total waktu: {dt:.2f}s",
+            )
+
+    def _get_current_active_scientific_data(self) -> np.ndarray | None:
+        """Mendapatkan array float32/ilmiah dari frame aktif saat ini atau dari viewer."""
+        if hasattr(self, "viewer") and self.viewer.has_image():
+            sci = self.viewer.scientific_data()
+            if sci is not None:
+                return sci
+        if self.sequence_manager.frame_count > 0:
+            idx = self.sequence_manager.current_index
+            if 0 <= idx < self.sequence_manager.frame_count:
+                try:
+                    loaded = self.sequence_manager.load_frame(idx)
+                    return loaded.scientific_data
+                except Exception as exc:
+                    if hasattr(self, "log_manager"):
+                        self.log_manager.warning("DATA", "Ambil Data Frame", f"Gagal membaca data ilmiah frame #{idx + 1}: {exc}")
+        return None
+
+    def open_histogram_window(self) -> None:
+        """Membuka jendela analisis Histogram & Statistik Citra non-modal interaktif."""
+        t0 = time.perf_counter()
+        if self.histogram_window is None:
+            self.histogram_window = HistogramWindow(parent=self)
+        data = self._get_current_active_scientific_data()
+        title = self._current_file_name or "Citra Aktif"
+        self.histogram_window.set_image_data(data, title)
+        self.histogram_window.show()
+        self.histogram_window.raise_()
+        self.histogram_window.activateWindow()
+        dt = time.perf_counter() - t0
+        self.log_manager.info("TOOLS", "Histogram Dibuka", f"Menampilkan analisis histogram untuk '{title}' | Total waktu: {dt:.2f}s")
+
+    def open_curves_window(self) -> None:
+        """Membuka jendela Transformasi Kurva non-modal interaktif."""
+        if not self.viewer.has_image():
+            self._show_error("Buka citra terlebih dahulu untuk menggunakan Transformasi Kurva.")
+            return
+        t0 = time.perf_counter()
+        if self.curves_window is None:
+            self.curves_window = CurvesWindow(parent=self)
+            self.curves_window.preview_requested.connect(self._on_curves_live_preview)
+            self.curves_window.apply_requested.connect(self._on_curves_apply)
+            self.curves_window.reset_requested.connect(self._on_curves_reset)
+
+        qimg = self.viewer.source_qimage()
+        data = self._get_current_active_scientific_data()
+        self._curves_backup_qimage = qimg.copy() if qimg is not None else None
+        self._curves_backup_scientific_data = data.copy() if data is not None else None
+
+        title = self._current_file_name or "Citra Aktif"
+        self.curves_window.set_source_data(data, qimg, title)
+        self.curves_window.show()
+        self.curves_window.raise_()
+        self.curves_window.activateWindow()
+        dt = time.perf_counter() - t0
+        self.log_manager.info("TOOLS", "Kurva Dibuka", f"Menampilkan Transformasi Kurva untuk '{title}' | Total waktu: {dt:.2f}s")
+
+    def _on_curves_live_preview(self, lut: np.ndarray, mode: str) -> None:
+        """Menerapkan kurva secara instan ke layar untuk pratinjau."""
+        base_qimg = self._curves_backup_qimage if self._curves_backup_qimage is not None else self.viewer.source_qimage()
+        if base_qimg is None:
+            return
+        pix = QPixmap.fromImage(base_qimg)
+        curved_pix = apply_curve_lut_to_pixmap(pix, lut, mode)
+        self.viewer.set_image(curved_pix.toImage(), self.viewer.scientific_data())
+
+    def _on_curves_apply(self, lut: np.ndarray, mode: str) -> None:
+        """Menerapkan kurva secara permanen ke tampilan dan data ilmiah."""
+        t0 = time.perf_counter()
+        if not self.viewer.has_image():
+            return
+
+        base_qimg = self._curves_backup_qimage if self._curves_backup_qimage is not None else self.viewer.source_qimage()
+        if base_qimg is not None:
+            pix = QPixmap.fromImage(base_qimg)
+            curved_pix = apply_curve_lut_to_pixmap(pix, lut, mode)
+            curved_qimg = curved_pix.toImage()
+        else:
+            curved_qimg = None
+
+        if self._curves_backup_scientific_data is not None:
+            base_data = self._curves_backup_scientific_data
+        else:
+            base_data = self._get_current_active_scientific_data()
+
+        curved_data = None
+        if base_data is not None:
+            curved_data = apply_curve_lut_to_array(base_data, lut, mode)
+
+        if curved_qimg is not None:
+            self.viewer.set_image(curved_qimg, curved_data)
+            self._curves_backup_qimage = curved_qimg.copy()
+            self._curves_backup_scientific_data = curved_data.copy() if curved_data is not None else None
+            self._active_original_qimage = curved_qimg.copy()
+            if hasattr(self, "_on_the_fly_previews"):
+                self._on_the_fly_previews.clear()
+
+        if self.curves_window is not None and self.curves_window.isVisible():
+            self.curves_window.mark_applied()
+            self.curves_window._source_data = curved_data
+            self.curves_window._source_qimage = curved_qimg
+            self.curves_window.canvas.set_histogram_data(curved_data)
+            self.curves_window.canvas.set_points([(0.0, 0.0), (1.0, 1.0)])
+
+        if self.histogram_window is not None and self.histogram_window.isVisible():
+            self.histogram_window.set_image_data(curved_data, self._current_file_name or "Citra (Kurva)")
+
+        self.statusBar().showMessage("Transformasi Kurva berhasil diterapkan pada citra.", 3000)
+        dt_curv = time.perf_counter() - t0
+        self.log_manager.success("CURVES", "Transformasi Kurva Diterapkan", f"Mode: {mode} | Total waktu: {dt_curv:.2f}s")
+
+    def _on_curves_reset(self) -> None:
+        """Mengembalikan tampilan citra ke kondisi sebelum kurva diubah."""
+        if self._curves_backup_qimage is not None:
+            self.viewer.set_image(self._curves_backup_qimage, self._curves_backup_scientific_data)
+            self.statusBar().showMessage("Kurva direset ke tampilan awal.", 2500)
+
+    def open_image_information_dialog(self) -> None:
+        """Membuka jendela Image Information & Metadata Editor ala Siril FITS Header Editor."""
+        t0 = time.perf_counter()
+        if self.info_dialog is None:
+            self.info_dialog = ImageInformationDialog(parent=self)
+            self.info_dialog.metadata_edited.connect(self._on_metadata_edited)
+
+        cards: list[tuple[str, str, str]] = []
+        info: ImageInfo | None = self._current_info
+        entry: SequenceFrameEntry | None = None
+
+        if self.sequence_manager.frame_count > 0:
+            idx = self.sequence_manager.current_index
+            if 0 <= idx < self.sequence_manager.frame_count:
+                entry = self.sequence_manager.entries[idx]
+                if info is None and entry.info is not None:
+                    info = entry.info
+
+        file_name = (
+            info.file_name
+            if info is not None
+            else (entry.file_name if entry is not None else (self._current_file_name or "Tidak ada berkas aktif"))
+        )
+
+        try:
+            if entry is not None or info is not None:
+                src_path = str(entry.source_path) if entry is not None else (str(info.path) if info is not None else "-")
+                cards.append(("FILENAME", file_name, "Nama berkas citra"))
+                cards.append(("FILE_PATH", src_path, "Jalur berkas di penyimpanan"))
+
+                fmt_str = (
+                    info.file_format
+                    if info is not None
+                    else (entry.file_format if entry is not None else "UNKNOWN")
+                )
+                cards.append(("FILE_FORMAT", str(fmt_str), "Format container citra"))
+
+                if info is not None:
+                    cards.append(("NAXIS1", str(info.width), "Lebar citra (piksel)"))
+                    cards.append(("NAXIS2", str(info.height), "Tinggi citra (piksel)"))
+                    cards.append(("CHANNELS", str(info.channels or 1), "Jumlah kanal sensor"))
+                    cards.append(("BITPIX", str(info.original_bit_depth or 16), "Kedalaman bit data asli"))
+                    if info.dtype_str:
+                        cards.append(("DATATYPE", str(info.dtype_str), "Tipe data penyimpanan internal"))
+                    if info.exif_orientation:
+                        cards.append(("ORIENT", str(info.exif_orientation), "Orientasi EXIF/sensor"))
+
+                    if info.fits_header is not None:
+                        try:
+                            _kw_map, raw_cards = _read_fits_header_cards_readonly(info.path, getattr(info, "hdu_index", 0) or 0)
+                            existing_keys = {c[0].upper() for c in cards}
+                            for k, v, cmt in raw_cards:
+                                k_up = str(k).strip().upper()
+                                if k_up and k_up not in existing_keys:
+                                    v_clean = str(v).strip()
+                                    if k_up in ("EXPTIME", "EXPOSURE") and v_clean:
+                                        try:
+                                            sec_val = float(v_clean)
+                                            if math.isfinite(sec_val) and sec_val >= 0.0:
+                                                v_clean = f"{sec_val:.2f} s"
+                                        except (ValueError, TypeError):
+                                            pass
+                                    cards.append((str(k).strip(), v_clean, str(cmt).strip()))
+                                    existing_keys.add(k_up)
+                        except Exception as fits_err:
+                            self.log_manager.warning("FITS", "Gagal membaca header FITS lengkap", str(fits_err))
+
+                    if info.raw_metadata is not None:
+                        meta = info.raw_metadata
+                        cam_name = (
+                            meta.format_camera_name()
+                            if hasattr(meta, "format_camera_name")
+                            else f"{meta.camera_make or ''} {meta.camera_model or ''}".strip()
+                        )
+                        raw_exptime_str = ""
+                        if hasattr(meta, "shutter_speed_sec") and meta.shutter_speed_sec is not None:
+                            try:
+                                s_val = float(meta.shutter_speed_sec)
+                                raw_exptime_str = f"{s_val:.2f} s" if (math.isfinite(s_val) and s_val >= 0.0) else f"{meta.shutter_speed_sec} s"
+                            except (ValueError, TypeError):
+                                raw_exptime_str = f"{meta.shutter_speed_sec} s"
+
+                        raw_items = [
+                            ("INSTRUME", cam_name, "Kamera / Instrumen"),
+                            ("ISOSPEED", str(meta.iso_speed or "") if hasattr(meta, "iso_speed") else "", "Sensitivitas ISO sensor"),
+                            ("EXPTIME", raw_exptime_str, "Waktu eksposur (shutter)"),
+                            ("APERTUR", f"f/{meta.aperture_fnumber:.1f}" if (hasattr(meta, "aperture_fnumber") and meta.aperture_fnumber is not None) else "", "Bukaan lensa (aperture)"),
+                            ("FOCALLEN", f"{meta.focal_length_mm:.1f} mm" if (hasattr(meta, "focal_length_mm") and meta.focal_length_mm is not None) else "", "Panjang fokus lensa"),
+                            ("DATE-OBS", str(meta.timestamp_str or ""), "Waktu perekaman citra"),
+                            ("BAYERPAT", str(getattr(meta, "cfa_pattern_str", "") or ""), "Pola Bayer CFA sensor"),
+                        ]
+                        existing_keys = {c[0].upper() for c in cards}
+                        for k, v, cmt in raw_items:
+                            if v and k.upper() not in existing_keys:
+                                cards.append((k, v, cmt))
+                                existing_keys.add(k.upper())
+
+                    if info.video_metadata is not None:
+                        v = info.video_metadata
+                        v_items = [
+                            ("CONTAINER", str(v.container_format), "Format kontainer video"),
+                            ("CODEC", str(v.codec_name), "Codec kompresi video"),
+                            ("FRAMECNT", str(v.frame_count), "Total frame dalam berkas video"),
+                            ("FPS", f"{v.average_rate_fps:.2f}" if v.average_rate_fps else "-", "Frame rate rata-rata"),
+                            ("PIX_FMT", str(v.pix_fmt or "-"), "Format piksel video asli"),
+                            ("DURATION", f"{v.duration_sec:.2f} s" if v.duration_sec else "-", "Durasi total video"),
+                        ]
+                        existing_keys = {c[0].upper() for c in cards}
+                        for k, v, cmt in v_items:
+                            if v and k.upper() not in existing_keys:
+                                cards.append((k, v, cmt))
+                                existing_keys.add(k.upper())
+
+                    if info.ser_metadata is not None:
+                        s = info.ser_metadata
+                        s_items = [
+                            ("COLOR_ID", str(s.color_id), "ID Tata Warna SER"),
+                            ("FRAMECNT", str(s.frame_count), "Jumlah frame SER"),
+                            ("OBSERVER", str(s.observer or "-"), "Pengamat / Observer"),
+                            ("TELESCOP", str(s.telescope or s.instrument or "-"), "Instrumen / Teleskop"),
+                            ("DATE-OBS", str(getattr(s, "date_time_utc_str", None) or getattr(s, "date_time_local_str", None) or "-"), "Waktu perekaman"),
+                        ]
+                        existing_keys = {c[0].upper() for c in cards}
+                        for k, v, cmt in s_items:
+                            if v and k.upper() not in existing_keys:
+                                cards.append((k, v, cmt))
+                                existing_keys.add(k.upper())
+            else:
+                cards.append(("STATUS", "Tidak ada berkas aktif", "Buka citra untuk memeriksa metadata"))
+        except Exception as exc:
+            self.log_manager.warning("METADATA", "Galat ekstraksi metadata", str(exc))
+            if not cards:
+                cards.append(("FILENAME", file_name, "Nama berkas citra"))
+                cards.append(("ERROR", str(exc), "Catatan pembacaan metadata"))
+
+        # Sertakan metadata custom yang telah diedit/ditambahkan oleh pengguna
+        for kw, (val, cmt) in self._custom_metadata.items():
+            cards.append((kw, val, cmt))
+
+        self.info_dialog.populate_metadata(cards, file_name)
+        self.info_dialog.show()
+        self.info_dialog.raise_()
+        self.info_dialog.activateWindow()
+        dt = time.perf_counter() - t0
+        self.log_manager.info("TOOLS", "Image Information Dibuka", f"Memeriksa metadata '{file_name}' | Total waktu: {dt:.2f}s")
+
+    def _on_metadata_edited(self, key: str, value: str, comment: str) -> None:
+        """Handler saat pengguna memodifikasi atau menambah kartu metadata di info dialog."""
+        t0 = time.perf_counter()
+        self._custom_metadata[key] = (value, comment)
+        dt = time.perf_counter() - t0
+        self.log_manager.info("METADATA", "Metadata Diperbarui", f"Kartu '{key}' = '{value}' ({comment}) | Total waktu: {dt:.2f}s")
+
+    def show_flat_info_dialog(self) -> None:
+        """Menampilkan dialog informasi dan pedoman ilmiah kalibrasi Flat-Field HILALONE."""
+        msg_text = (
+            "PEDOMAN KALIBRASI FLAT-FIELD (MVP 1.0)\n\n"
+            "1. Tujuan Ilmiah:\n"
+            "   Mengoreksi efek vignetting optik (penurunan cahaya ke tepi sensor/lensa) dan\n"
+            "   variasi respons sensitivitas piksel secara non-destruktif sebelum ekstraksi\n"
+            "   background dan stacking.\n\n"
+            "2. Rumus Normalisasi Master Flat:\n"
+            f"   {NORMALIZATION_FORMULA_TEXT}\n"
+            "   (Normalisasi dilakukan dengan membagi master flat terhadap median dari seluruh\n"
+            "    piksel yang valid: F > 0 dan berhingga)\n\n"
+            "3. Persyaratan Berkas Flat:\n"
+            "   • Pencahayaan Homogen : Flat frame harus berupa citra pencahayaan merata\n"
+            "                          (twilight sky flat atau lightbox panel).\n"
+            "   • Validitas Piksel    : Dilarang menggunakan flat gelap total\n"
+            "                          (nilai piksel <= 0 atau bernilai NaN/Infinite).\n"
+            "   • Format Fleksibel    : Mendukung Single Image, Multiple Files, Folder,\n"
+            "                          Video (AVI/MP4/MOV), atau berkas astronomi SER.\n\n"
+            "4. Multi-frame Light vs Flat:\n"
+            "   Jumlah frame Light dan Flat tidak wajib sama. Seluruh frame Flat diagregasikan\n"
+            "   menjadi SATU Master Flat berkualitas tinggi yang otomatis diaplikasikan ke seluruh\n"
+            "   frame Light saat pemrosesan otomatis dijalankan."
+        )
+        QMessageBox.information(
+            self,
+            "Informasi Kalibrasi Flat-Field HILALONE",
+            msg_text,
+        )
+
+    def toggle_night_vision_theme(self, active: bool | None = None, *, persist: bool = True) -> None:
+        """Mengganti tema antarmuka antara Standard Dark dan Night Vision Red Theme."""
+        t0 = time.perf_counter()
+        if active is None:
+            self._is_night_vision = not self._is_night_vision
+        else:
+            self._is_night_vision = bool(active)
+
+        self.act_night_vision.blockSignals(True)
+        self.act_night_vision.setChecked(self._is_night_vision)
+        self.act_night_vision.blockSignals(False)
+
+        self.btn_quick_night_vision.blockSignals(True)
+        self.btn_quick_night_vision.setChecked(self._is_night_vision)
+        self.btn_quick_night_vision.blockSignals(False)
+
+        theme_mode = ThemeMode.NIGHT_VISION_RED if self._is_night_vision else ThemeMode.STANDARD_DARK
+        stylesheet = get_theme_stylesheet(theme_mode)
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(stylesheet)
+
+        # Terapkan penyelarasan warna ikon & elemen ke seluruh widget antarmuka
+        self._apply_theme_to_widgets(self._is_night_vision)
+        if persist:
+            self._save_user_preferences()
+
+        theme_name = "Night Vision Red" if self._is_night_vision else "Standard Dark"
+        dt_theme = time.perf_counter() - t0
+        self.log_manager.info("THEME", "Pergantian Tema", f"Tema antarmuka beralih ke {theme_name} | Total waktu: {dt_theme:.2f}s")
+        self.statusBar().showMessage(f"Tema antarmuka: {theme_name}", 3000)
+
+    def _apply_theme_to_widgets(self, is_night_vision: bool) -> None:
+        """Menyelaraskan seluruh elemen visual, ikon, status bar, accordion, dan logo dengan tema aktif."""
+        # 1. Logo Header
+        if hasattr(self, "logo_label"):
+            logo_pixmap = get_header_logo_pixmap(target_height=44, night_vision=is_night_vision)
+            if not logo_pixmap.isNull():
+                self.logo_label.setPixmap(logo_pixmap)
+
+        # 2. Tombol Aksi Cepat di Header
+        if hasattr(self, "btn_quick_night_vision"):
+            self.btn_quick_night_vision.setIcon(
+                create_themed_vector_icon("moon", night_vision=is_night_vision, size=16)
+            )
+        if hasattr(self, "btn_quick_histogram"):
+            self.btn_quick_histogram.setIcon(
+                create_themed_vector_icon("bar-chart-2", night_vision=is_night_vision, size=16)
+            )
+        if hasattr(self, "btn_quick_curves"):
+            self.btn_quick_curves.setIcon(
+                create_themed_vector_icon("trending-up", night_vision=is_night_vision, size=16)
+            )
+        if hasattr(self, "btn_quick_info"):
+            self.btn_quick_info.setIcon(
+                create_themed_vector_icon("info", night_vision=is_night_vision, size=16)
+            )
+        if hasattr(self, "btn_quick_console"):
+            self.btn_quick_console.setIcon(
+                create_themed_vector_icon("terminal", night_vision=is_night_vision, size=16)
+            )
+
+        # 3. Toolbar Aksi Gambar (bawah viewer)
+        action_buttons = [
+            ("magnifier_button", "scan-eye", 20, False),
+            ("zoom_out_button", "zoom-out", 20, False),
+            ("zoom_in_button", "zoom-in", 20, False),
+            ("fit_image_button", "scan", 20, False),
+            ("original_size_button", "maximize", 20, False),
+            ("rotate_ccw_button", "rotate-ccw", 20, False),
+            ("rotate_cw_button", "rotate-cw", 20, False),
+            ("flip_horizontal_button", "flip-horizontal", 20, False),
+            ("flip_vertical_button", "flip-vertical", 20, False),
+            ("negative_view_button", "negative-view", 20, False),
+            ("save_result_action_button", "save", 20, False),
+            ("snapshot_button", "camera", 20, False),
+        ]
+        for attr, icon_name, icon_size, is_info in action_buttons:
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                btn.setIcon(
+                    create_themed_vector_icon(
+                        icon_name,
+                        night_vision=is_night_vision,
+                        is_info=is_info,
+                        size=icon_size,
+                    )
+                )
+
+        # 4. Kontrol Pemrosesan & Navigasi
+        if hasattr(self, "btn_flat_info"):
+            self.btn_flat_info.setIcon(
+                create_themed_vector_icon("info", night_vision=is_night_vision, is_info=True, size=14)
+            )
+        if hasattr(self, "start_auto_process_button"):
+            self.start_auto_process_button.setIcon(
+                create_themed_vector_icon("play", night_vision=is_night_vision, size=16)
+            )
+        if hasattr(self, "toggle_before_after_button"):
+            self.toggle_before_after_button.setIcon(
+                create_themed_vector_icon("eye", night_vision=is_night_vision, size=15)
+            )
+        if hasattr(self, "prev_frame_button"):
+            self.prev_frame_button.setIcon(
+                create_themed_vector_icon("chevron-left", night_vision=is_night_vision, size=14)
+            )
+        if hasattr(self, "next_frame_button"):
+            self.next_frame_button.setIcon(
+                create_themed_vector_icon("chevron-right", night_vision=is_night_vision, size=14)
+            )
+        if hasattr(self, "fits_full_header_toggle"):
+            icon_name = "chevron-down" if self.fits_full_header_toggle.isChecked() else "chevron-right"
+            self.fits_full_header_toggle.setIcon(
+                create_themed_vector_icon(icon_name, night_vision=is_night_vision, size=14)
+            )
+
+        # 5. Status Bar
+        if hasattr(self, "status_file_info"):
+            file_col = "#b91c1c" if is_night_vision else "#94a3b8"
+            self.status_file_info.setStyleSheet(f"color: {file_col}; padding-right: 12px;")
+        if hasattr(self, "status_res_info"):
+            res_col = "#b91c1c" if is_night_vision else "#94a3b8"
+            self.status_res_info.setStyleSheet(f"color: {res_col}; padding-right: 12px;")
+        if hasattr(self, "status_view_info"):
+            view_col = "#b91c1c" if is_night_vision else "#94a3b8"
+            self.status_view_info.setStyleSheet(f"color: {view_col}; padding-right: 12px;")
+        if hasattr(self, "status_zoom_info"):
+            zoom_col = "#ef4444" if is_night_vision else "#38bdf8"
+            self.status_zoom_info.setStyleSheet(f"color: {zoom_col}; font-weight: bold; padding-right: 12px;")
+        if hasattr(self, "status_pixel_info"):
+            pix_col = "#fca5a5" if is_night_vision else "#e2e8f0"
+            self.status_pixel_info.setStyleSheet(f"color: {pix_col}; font-family: monospace; padding-right: 6px;")
+
+        # 6. Accordion Groups & Sections
+        if hasattr(self, "main_accordion_group"):
+            self.main_accordion_group.set_night_vision(is_night_vision)
+        if hasattr(self, "nested_accordion_group"):
+            self.nested_accordion_group.set_night_vision(is_night_vision)
+
+        accordion_sections = [
+            "section_input_sequence",
+            "section_processing",
+            "section_image_info",
+            "section_sensor_info",
+            "section_camera_metadata",
+            "section_fits_info",
+            "section_video_info",
+            "section_ser_info",
+            "acc_nested_adv_settings",
+            "acc_nested_flat",
+            "acc_nested_master_flat",
+            "acc_nested_preview",
+            "acc_nested_results",
+            "acc_nested_histogram",
+        ]
+        for sec_name in accordion_sections:
+            sec = getattr(self, sec_name, None)
+            if sec is not None and hasattr(sec, "set_night_vision"):
+                sec.set_night_vision(is_night_vision)
+
+        # 7. Viewer
+        if hasattr(self, "viewer") and hasattr(self.viewer, "set_night_vision"):
+            self.viewer.set_night_vision(is_night_vision)
+
+        # 8. Top Panels (Panel A, B, C)
+        for panel_attr in ("panel_a", "panel_b", "panel_c"):
+            p = getattr(self, panel_attr, None)
+            if p is not None and hasattr(p, "set_night_vision"):
+                p.set_night_vision(is_night_vision)
+
+        # 9. Console Panel
+        if hasattr(self, "console_panel") and hasattr(self.console_panel, "set_night_vision"):
+            self.console_panel.set_night_vision(is_night_vision)
+
+    def toggle_console_panel(self, visible: bool | None = None) -> None:
+        """Menampilkan atau menyembunyikan panel Console / Processing Log di bagian bawah."""
+        if visible is None:
+            visible = not self.console_panel.isVisible()
+        else:
+            visible = bool(visible)
+
+        self.console_panel.setVisible(visible)
+        self.act_console_log.blockSignals(True)
+        self.act_console_log.setChecked(visible)
+        self.act_console_log.blockSignals(False)
+
+        if hasattr(self, "act_toggle_console"):
+            self.act_toggle_console.blockSignals(True)
+            self.act_toggle_console.setChecked(visible)
+            self.act_toggle_console.blockSignals(False)
+
+        self.btn_quick_console.blockSignals(True)
+        self.btn_quick_console.setChecked(visible)
+        self.btn_quick_console.blockSignals(False)
+
     def _on_viewer_zoom_changed(self, zoom_factor: float, is_fit_mode: bool) -> None:
         """Memperbarui persentase zoom pada status bar saat zoom gambar berubah."""
         pct = int(round(zoom_factor * 100))
@@ -857,6 +1718,24 @@ class MainWindow(QMainWindow):
         self.mag_8x_action.setChecked(zoom == 8)
         self.statusBar().showMessage(f"Perbesaran Hover Magnifier diatur ke {zoom}×.")
 
+    def _on_negative_view_toggled(self, checked: bool) -> None:
+        """Mengalihkan mode tampilan viewer antara Normal View dan Negative View."""
+        if not self.viewer.has_image():
+            if self.negative_view_button.isChecked():
+                self.negative_view_button.blockSignals(True)
+                self.negative_view_button.setChecked(False)
+                self.negative_view_button.blockSignals(False)
+            self.viewer.set_negative_view(False)
+            return
+
+        self.viewer.set_negative_view(checked)
+        if checked:
+            self.log_manager.info("VIEW", "Mode Tampilan", "Tampilan dialihkan ke Negative View (non-destruktif).")
+            self.statusBar().showMessage("Tampilan Negative View aktif (data ilmiah tidak berubah).", 2500)
+        else:
+            self.log_manager.info("VIEW", "Mode Tampilan", "Tampilan dikembalikan ke Normal View.")
+            self.statusBar().showMessage("Tampilan Normal View aktif.", 2500)
+
     def _refresh_image_toolbar_state(self) -> None:
         """Memperbarui status ketersediaan tombol toolbar aksi gambar."""
         has_img = self.viewer.has_image()
@@ -865,6 +1744,11 @@ class MainWindow(QMainWindow):
         self.zoom_in_button.setEnabled(has_img)
         self.fit_image_button.setEnabled(has_img)
         self.original_size_button.setEnabled(has_img)
+        self.rotate_ccw_button.setEnabled(has_img)
+        self.rotate_cw_button.setEnabled(has_img)
+        self.flip_horizontal_button.setEnabled(has_img)
+        self.flip_vertical_button.setEnabled(has_img)
+        self.negative_view_button.setEnabled(has_img)
         self.snapshot_button.setEnabled(has_img)
 
         has_save_data = (
@@ -885,9 +1769,113 @@ class MainWindow(QMainWindow):
         if not has_img:
             self.magnifier_button.setChecked(False)
             self.viewer.set_magnifier_active(False)
+            self.negative_view_button.blockSignals(True)
+            self.negative_view_button.setChecked(False)
+            self.negative_view_button.blockSignals(False)
+            self.viewer.set_negative_view(False)
+
+    # ------------------------------------------------- TRANSFORMASI CITRA (ROTASI & FLIP)
+    def _apply_geometric_transform_to_all_layers(
+        self,
+        qimage_transform_fn: Any,
+        array_transform_fn: Any,
+    ) -> None:
+        """Menerapkan transformasi geometris (rotasi/flip) secara sinkron ke seluruh layer pratinjau dan data ilmiah."""
+        # 1. Update active original & original unprocessed
+        if self._active_original_qimage is not None:
+            self._active_original_qimage = qimage_transform_fn(self._active_original_qimage)
+        if hasattr(self, "_original_unprocessed_qimage") and self._original_unprocessed_qimage is not None:
+            self._original_unprocessed_qimage = qimage_transform_fn(self._original_unprocessed_qimage)
+
+        # 2. Update curves backup jika ada
+        if self._curves_backup_qimage is not None:
+            self._curves_backup_qimage = qimage_transform_fn(self._curves_backup_qimage)
+        if self._curves_backup_scientific_data is not None:
+            self._curves_backup_scientific_data = array_transform_fn(self._curves_backup_scientific_data)
+
+        # 3. Update pipeline previews & scientific result jika ada
+        if self._last_pipeline_result is not None:
+            if hasattr(self._last_pipeline_result, "previews") and self._last_pipeline_result.previews:
+                for k, prev_img in list(self._last_pipeline_result.previews.items()):
+                    if prev_img is not None and not prev_img.isNull():
+                        self._last_pipeline_result.previews[k] = qimage_transform_fn(prev_img)
+            if self._last_pipeline_result.linear_result is not None:
+                self._last_pipeline_result.linear_result = array_transform_fn(self._last_pipeline_result.linear_result)
+
+        # 4. Kosongkan cache on-the-fly previews agar dihitung ulang dari data terputar
+        if hasattr(self, "_on_the_fly_previews"):
+            self._on_the_fly_previews.clear()
+
+        # 5. Sinkronisasi info resolusi dan dialog/window eksternal
+        sz = self.viewer.raw_image_size()
+        if hasattr(self, "status_res_info"):
+            self.status_res_info.setText(f"{sz.width()} × {sz.height()} px")
+        if self.histogram_window is not None and self.histogram_window.isVisible():
+            self.histogram_window.set_image_data(self.viewer.scientific_data(), self._current_file_name)
+        if self.curves_window is not None and self.curves_window.isVisible():
+            self.curves_window.set_source_data(
+                self.viewer.scientific_data(), self.viewer.source_qimage(), self._current_file_name
+            )
+
+    def rotate_image_cw(self) -> None:
+        """Memutar citra aktif 90° searah jarum jam (Clockwise)."""
+        if not self.viewer.has_image():
+            return
+        t0 = time.perf_counter()
+        self.viewer.rotate_cw()
+        self._apply_geometric_transform_to_all_layers(
+            lambda img: img.transformed(QTransform().rotate(90), Qt.TransformationMode.FastTransformation),
+            lambda arr: np.ascontiguousarray(np.rot90(arr, k=-1, axes=(0, 1))),
+        )
+        dt = time.perf_counter() - t0
+        self.log_manager.info("VIEW", "Rotasi Citra", f"Citra diputar 90° searah jarum jam (CW) | Total waktu: {dt:.2f}s")
+        self.statusBar().showMessage("Citra diputar 90° searah jarum jam (CW).", 2500)
+
+    def rotate_image_ccw(self) -> None:
+        """Memutar citra aktif 90° berlawanan arah jarum jam (Counter-Clockwise)."""
+        if not self.viewer.has_image():
+            return
+        t0 = time.perf_counter()
+        self.viewer.rotate_ccw()
+        self._apply_geometric_transform_to_all_layers(
+            lambda img: img.transformed(QTransform().rotate(-90), Qt.TransformationMode.FastTransformation),
+            lambda arr: np.ascontiguousarray(np.rot90(arr, k=1, axes=(0, 1))),
+        )
+        dt = time.perf_counter() - t0
+        self.log_manager.info("VIEW", "Rotasi Citra", f"Citra diputar 90° berlawanan arah jarum jam (CCW) | Total waktu: {dt:.2f}s")
+        self.statusBar().showMessage("Citra diputar 90° berlawanan arah jarum jam (CCW).", 2500)
+
+    def flip_image_horizontal(self) -> None:
+        """Membalik citra aktif secara horizontal (Mirror Kiri-Kanan)."""
+        if not self.viewer.has_image():
+            return
+        t0 = time.perf_counter()
+        self.viewer.flip_horizontal()
+        self._apply_geometric_transform_to_all_layers(
+            lambda img: img.transformed(QTransform().scale(-1, 1)),
+            lambda arr: np.ascontiguousarray(np.flip(arr, axis=1)),
+        )
+        dt = time.perf_counter() - t0
+        self.log_manager.info("VIEW", "Flip Citra", f"Citra dibalik secara horizontal (Flip Horizontal) | Total waktu: {dt:.2f}s")
+        self.statusBar().showMessage("Citra dibalik secara horizontal (Flip Horizontal).", 2500)
+
+    def flip_image_vertical(self) -> None:
+        """Membalik citra aktif secara vertikal (Mirror Atas-Bawah)."""
+        if not self.viewer.has_image():
+            return
+        t0 = time.perf_counter()
+        self.viewer.flip_vertical()
+        self._apply_geometric_transform_to_all_layers(
+            lambda img: img.transformed(QTransform().scale(1, -1)),
+            lambda arr: np.ascontiguousarray(np.flip(arr, axis=0)),
+        )
+        dt = time.perf_counter() - t0
+        self.log_manager.info("VIEW", "Flip Citra", f"Citra dibalik secara vertikal (Flip Vertical) | Total waktu: {dt:.2f}s")
+        self.statusBar().showMessage("Citra dibalik secara vertikal (Flip Vertical).", 2500)
 
     def take_quick_snapshot(self) -> Path | None:
         """Mengambil tangkapan layar bersih area gambar aktif (Quick Snapshot) format PNG."""
+        t0 = time.perf_counter()
         if not self.viewer.has_image():
             self._show_error("Tidak ada gambar yang sedang ditampilkan untuk diambil snapshot.")
             return None
@@ -919,6 +1907,12 @@ class MainWindow(QMainWindow):
             return None
 
         self._last_dir = str(candidate_path.parent)
+        dt_snap = time.perf_counter() - t0
+        self.log_manager.info(
+            "SNAPSHOT",
+            "Cuplikan Cepat Disimpan",
+            f"{candidate_path.name} | Lokasi: {candidate_path.parent} | Total waktu: {dt_snap:.2f}s",
+        )
         self.statusBar().showMessage(f"Snapshot tersimpan: {candidate_path.name}")
         self.stacking_status_label.setText(f"Snapshot cepat tersimpan: {candidate_path.name}")
         return candidate_path
@@ -964,36 +1958,21 @@ class MainWindow(QMainWindow):
         self,
         title_text: str,
         rows: tuple[tuple[str, str], ...],
-    ) -> tuple[QFrame, QLabel]:
-        """Membuat satu kartu kelompok informasi dengan header dan grid 2 kolom."""
-        card = QFrame()
-        card.setObjectName("infoSectionCard")
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(12, 10, 12, 10)
-        card_layout.setSpacing(6)
-
-        header = QLabel(title_text)
-        header.setObjectName("sectionHeader")
-        header.setWordWrap(True)
-        card_layout.addWidget(header)
-
+    ) -> tuple[AccordionSection, QLabel]:
+        """Membuat satu kartu kelompok informasi sebagai AccordionSection dengan header dan grid 2 kolom."""
+        card = AccordionSection(title_text)
         grid = QGridLayout()
+        grid.setContentsMargins(4, 4, 4, 4)
+        grid.setSpacing(6)
         self._populate_key_value_grid(grid, rows)
-        card_layout.addLayout(grid)
-        return card, header
+        card.add_layout(grid)
+        return card, card.title_label
 
-    def _build_fits_info_card(self) -> QFrame:
-        """Membangun kartu 'Informasi FITS' dengan 3 sub-kelompok + bagian collapsible 'Header FITS Lengkap'."""
-        card = QFrame()
-        card.setObjectName("infoSectionCard")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(8)
-
-        self.header_fits_info = QLabel("Informasi FITS")
-        self.header_fits_info.setObjectName("sectionHeader")
-        self.header_fits_info.setWordWrap(True)
-        layout.addWidget(self.header_fits_info)
+    def _build_fits_info_card(self) -> AccordionSection:
+        """Membangun kartu 'Informasi FITS' sebagai AccordionSection dengan 3 sub-kelompok + bagian collapsible 'Header FITS Lengkap'."""
+        card = AccordionSection("Informasi FITS")
+        self.header_fits_info = card.title_label
+        layout = card.content_layout
 
         # Sub-kelompok A: Struktur Data
         self.fits_sub_struct_label = QLabel("A. Struktur Data")
@@ -1020,8 +1999,12 @@ class MainWindow(QMainWindow):
         layout.addLayout(inst_grid)
 
         # Bagian Collapsible: Header FITS Lengkap
-        self.fits_full_header_toggle = QPushButton("▶ Header FITS Lengkap")
+        self.fits_full_header_toggle = QPushButton("Header FITS Lengkap")
         self.fits_full_header_toggle.setObjectName("collapsibleButton")
+        self.fits_full_header_toggle.setIcon(
+            create_themed_vector_icon("chevron-right", night_vision=self._is_night_vision, size=14)
+        )
+        self.fits_full_header_toggle.setIconSize(QSize(14, 14))
         self.fits_full_header_toggle.setCheckable(True)
         self.fits_full_header_toggle.setChecked(False)
         self.fits_full_header_toggle.toggled.connect(self._on_fits_full_header_toggled)
@@ -1040,12 +2023,11 @@ class MainWindow(QMainWindow):
         self.fits_full_header_grid.setColumnStretch(1, 1)
         full_box_layout.addLayout(self.fits_full_header_grid)
 
-        # Label tersembunyi yang menyimpan seluruh kartu header asli secara utuh untuk inspeksi/tes
+        # Label di memori yang menyimpan seluruh kartu header asli secara utuh untuk pengujian/inspeksi,
+        # tidak dimasukkan ke dalam visual layout agar tidak menduplikasi tampilan tabel grid.
         self.fits_full_header_raw_label = QLabel(EMPTY_VALUE)
         self.fits_full_header_raw_label.setObjectName("infoValue")
-        self.fits_full_header_raw_label.setWordWrap(True)
         self.fits_full_header_raw_label.setVisible(False)
-        full_box_layout.addWidget(self.fits_full_header_raw_label)
         self._info_values["fits_full_header"] = self.fits_full_header_raw_label
 
         self.fits_full_header_container.setVisible(False)
@@ -1053,58 +2035,111 @@ class MainWindow(QMainWindow):
         return card
 
     def _on_fits_full_header_toggled(self, checked: bool) -> None:
-        arrow = "▼" if checked else "▶"
+        icon_name = "chevron-down" if checked else "chevron-right"
+        self.fits_full_header_toggle.setIcon(
+            create_themed_vector_icon(icon_name, night_vision=self._is_night_vision, size=14)
+        )
         count_suffix = f" ({self._full_fits_card_count})" if self._full_fits_card_count > 0 else ""
-        self.fits_full_header_toggle.setText(f"{arrow} Header FITS Lengkap{count_suffix}")
+        self.fits_full_header_toggle.setText(f"Header FITS Lengkap{count_suffix}")
         self.fits_full_header_container.setVisible(checked)
 
-    def _build_processing_card(self) -> QFrame:
-        """Membangun kartu 'AUTOMATED IMAGE PROCESSING' untuk menjalankan Full Automated Pipeline."""
-        card = QFrame()
-        card.setObjectName("processingCard")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 10, 12, 10)
+    def _build_processing_card(self) -> AccordionSection:
+        """Membangun kartu 'B. AUTOMATED IMAGE PROCESSING' sebagai AccordionSection dengan kontrol utama dan nested accordions."""
+        card = AccordionSection("B. AUTOMATED IMAGE PROCESSING")
+        card.setObjectName("accordionSection")
+        self.header_processing = card.title_label
+        layout = card.content_layout
         layout.setSpacing(8)
 
-        self.header_processing = QLabel("AUTOMATED IMAGE PROCESSING")
-        self.header_processing.setObjectName("sectionHeader")
-        self.header_processing.setWordWrap(True)
-        layout.addWidget(self.header_processing)
-
-        # A. Profile selector
-        prof_row = QHBoxLayout()
-        prof_row.setSpacing(8)
-        prof_lbl = QLabel("Profil:")
-        prof_lbl.setObjectName("infoKey")
-        prof_lbl.setMinimumWidth(68)
+        # A. Profile selector (disembunyikan dari UI; aplikasi berjalan di mode Standar Basic tunggal)
         self.profile_combo = QComboBox()
         self.profile_combo.addItem(
-            "Basic — Konservatif", ProcessingProfile.BASIC.value
+            "Basic — Standar HILALONE (Cepat & Ilmiah)", ProcessingProfile.BASIC.value
         )
-        self.profile_combo.addItem(
-            "Medium — Seimbang (Default)", ProcessingProfile.MEDIUM.value
-        )
-        self.profile_combo.addItem(
-            "High — Adaptif", ProcessingProfile.HIGH.value
-        )
-        self.profile_combo.setCurrentIndex(1)  # Default: Medium
+        self.profile_combo.setCurrentIndex(0)
+        self.profile_combo.setEnabled(False)
+        self.profile_combo.setVisible(False)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_combo_changed)
-        prof_row.addWidget(prof_lbl)
-        prof_row.addWidget(self.profile_combo, 1)
-        layout.addLayout(prof_row)
 
         self.profile_summary_label = QLabel("")
         self.profile_summary_label.setObjectName("infoKey")
         self.profile_summary_label.setWordWrap(True)
-        layout.addWidget(self.profile_summary_label)
+        self.profile_summary_label.setVisible(False)
 
-        # Bagian Collapsible: Pengaturan Lanjutan (Advanced Settings)
-        self.adv_settings_toggle = QPushButton("▶ Pengaturan Lanjutan (Advanced Settings)")
-        self.adv_settings_toggle.setObjectName("collapsibleButton")
-        self.adv_settings_toggle.setCheckable(True)
-        self.adv_settings_toggle.setChecked(False)
-        self.adv_settings_toggle.toggled.connect(self._on_adv_settings_toggled)
-        layout.addWidget(self.adv_settings_toggle)
+        # Flat Calibration (Opsional)
+        flat_check_row = QHBoxLayout()
+        flat_check_row.setSpacing(6)
+        self.flat_checkbox = QCheckBox("Apply Flat Calibration (Opsional)")
+        self.flat_checkbox.setChecked(False)
+        self.flat_checkbox.toggled.connect(self._on_flat_checkbox_toggled)
+        self.btn_flat_info = QToolButton()
+        self.btn_flat_info.setObjectName("flatInfoButton")
+        self.btn_flat_info.setIcon(
+            create_themed_vector_icon("info", night_vision=self._is_night_vision, is_info=True, size=14)
+        )
+        self.btn_flat_info.setIconSize(QSize(14, 14))
+        self.btn_flat_info.setToolTip("Informasi & Pedoman Ilmiah Kalibrasi Flat-Field HILALONE")
+        self.btn_flat_info.setFixedSize(22, 22)
+        self.btn_flat_info.clicked.connect(self.show_flat_info_dialog)
+        flat_check_row.addWidget(self.flat_checkbox)
+        flat_check_row.addWidget(self.btn_flat_info)
+        flat_check_row.addStretch(1)
+        layout.addLayout(flat_check_row)
+
+        # Tombol Utama: Mulai Pemrosesan Otomatis & Cancel
+        auto_action_row = QHBoxLayout()
+        auto_action_row.setSpacing(8)
+        self.start_auto_process_button = QPushButton("Mulai Pemrosesan Otomatis")
+        self.start_auto_process_button.setObjectName("startAutoProcessButton")
+        self.start_auto_process_button.setIcon(
+            create_themed_vector_icon("play", night_vision=self._is_night_vision, size=16)
+        )
+        self.start_auto_process_button.setIconSize(QSize(16, 16))
+        self.start_auto_process_button.setEnabled(False)
+        self.start_auto_process_button.clicked.connect(self._on_start_auto_process_clicked)
+
+        self.cancel_pipeline_button = QPushButton("Cancel")
+        self.cancel_pipeline_button.setObjectName("secondaryButton")
+        self.cancel_pipeline_button.setEnabled(False)
+        self.cancel_pipeline_button.clicked.connect(self.cancel_automated_pipeline)
+
+        auto_action_row.addWidget(self.start_auto_process_button, 1)
+        auto_action_row.addWidget(self.cancel_pipeline_button, 0)
+        layout.addLayout(auto_action_row)
+
+        # Tombol Khusus Stacking Saja (disembunyikan dari UI visual; alur terintegrasi lewat Mulai Pemrosesan Otomatis)
+        self.start_stacking_button = QPushButton("Mulai Stacking (Hanya Stacking)")
+        self.start_stacking_button.setObjectName("startStackingButton")
+        self.start_stacking_button.setEnabled(False)
+        self.start_stacking_button.setVisible(False)
+        self.start_stacking_button.clicked.connect(self._on_start_stacking_clicked)
+
+        self.cancel_stacking_button = QPushButton("Cancel Stacking")
+        self.cancel_stacking_button.setObjectName("secondaryButton")
+        self.cancel_stacking_button.setEnabled(False)
+        self.cancel_stacking_button.setVisible(False)
+        self.cancel_stacking_button.clicked.connect(self.cancel_stacking)
+
+        # Progress bar & status proses pipeline
+        self.stacking_progress_bar = QProgressBar()
+        self.stacking_progress_bar.setRange(0, 100)
+        self.stacking_progress_bar.setValue(0)
+        self.stacking_progress_bar.setVisible(False)
+        layout.addWidget(self.stacking_progress_bar)
+
+        self.stacking_status_label = QLabel("Belum ada proses pemrosesan.")
+        self.stacking_status_label.setObjectName("infoKey")
+        self.stacking_status_label.setWordWrap(True)
+        layout.addWidget(self.stacking_status_label)
+
+        # =====================================================================
+        # NESTED ACCORDION GROUP (Automated Image Processing Sub-sections)
+        # =====================================================================
+        self.nested_accordion_group = AccordionGroup(exclusive=True)
+
+        # 1. Nested: Pengaturan Lanjutan (Advanced Settings)
+        self.acc_nested_adv_settings = AccordionSection("Pengaturan Lanjutan (Advanced Settings)", is_nested=True)
+        self.adv_settings_toggle = self.acc_nested_adv_settings.header_button
 
         self.adv_settings_container = QFrame()
         self.adv_settings_container.setObjectName("fullHeaderBox")
@@ -1126,32 +2161,11 @@ class MainWindow(QMainWindow):
         self.adv_bg_method_combo.addItem("Polinomial Derajat 2", BackgroundModelMethod.POLYNOMIAL_DEG_2.value)
         self.adv_bg_method_combo.addItem("Thin Plate Spline RBF", BackgroundModelMethod.TPS_RBF.value)
         self.adv_bg_method_combo.addItem("Automatic Robust Mesh RBF", BackgroundModelMethod.AUTO_ROBUST_RBF.value)
-        self.adv_bg_method_combo.setCurrentIndex(1)
+        self.adv_bg_method_combo.setCurrentIndex(0)
+        self.adv_bg_method_combo.currentIndexChanged.connect(lambda: self._update_processing_accordion_summary())
         bg_meth_row.addWidget(bg_meth_lbl)
         bg_meth_row.addWidget(self.adv_bg_method_combo, 1)
         adv_layout.addLayout(bg_meth_row)
-
-        # Protected ROI tools
-        roi_btn_row = QHBoxLayout()
-        roi_btn_row.setSpacing(6)
-        self.roi_select_button = QPushButton("Tandai Wilayah Proteksi (ROI)")
-        self.roi_select_button.setObjectName("secondaryButton")
-        self.roi_select_button.setCheckable(True)
-        self.roi_select_button.clicked.connect(self._on_roi_select_button_clicked)
-
-        self.roi_clear_button = QPushButton("Hapus ROI")
-        self.roi_clear_button.setObjectName("secondaryButton")
-        self.roi_clear_button.setEnabled(False)
-        self.roi_clear_button.clicked.connect(self.clear_protected_roi)
-
-        roi_btn_row.addWidget(self.roi_select_button, 1)
-        roi_btn_row.addWidget(self.roi_clear_button, 0)
-        adv_layout.addLayout(roi_btn_row)
-
-        self.roi_status_label = QLabel("ROI: Tidak ada (seluruh citra disampel)")
-        self.roi_status_label.setObjectName("infoKey")
-        self.roi_status_label.setWordWrap(True)
-        adv_layout.addWidget(self.roi_status_label)
 
         # 2. Image Enhancement Settings
         enh_set_lbl = QLabel("2. Image Enhancement (CLAHE)")
@@ -1160,6 +2174,7 @@ class MainWindow(QMainWindow):
 
         self.adv_clahe_enable_checkbox = QCheckBox("Aktifkan CLAHE")
         self.adv_clahe_enable_checkbox.setChecked(True)
+        self.adv_clahe_enable_checkbox.toggled.connect(lambda: self._update_processing_accordion_summary())
         adv_layout.addWidget(self.adv_clahe_enable_checkbox)
 
         enh_clip_row = QHBoxLayout()
@@ -1171,7 +2186,7 @@ class MainWindow(QMainWindow):
         self.adv_clahe_clip_combo.addItem("0.012 (Ringan)", 0.012)
         self.adv_clahe_clip_combo.addItem("0.016 (Moderat)", 0.016)
         self.adv_clahe_clip_combo.addItem("0.022 (Kuat)", 0.022)
-        self.adv_clahe_clip_combo.setCurrentIndex(1)
+        self.adv_clahe_clip_combo.setCurrentIndex(0)
         enh_clip_row.addWidget(enh_clip_lbl)
         enh_clip_row.addWidget(self.adv_clahe_clip_combo, 1)
         adv_layout.addLayout(enh_clip_row)
@@ -1190,30 +2205,24 @@ class MainWindow(QMainWindow):
         self.adv_stretch_combo.addItem("Asinh + MTF", StretchMethod.ASINH_MTF.value)
         self.adv_stretch_combo.addItem("Adaptive Asinh + MTF", StretchMethod.ADAPTIVE_ASINH_MTF.value)
         self.adv_stretch_combo.addItem("GHS + MTF (Generalized Hyperbolic)", StretchMethod.GHS_MTF.value)
-        self.adv_stretch_combo.setCurrentIndex(1)
+        self.adv_stretch_combo.setCurrentIndex(0)
+        self.adv_stretch_combo.currentIndexChanged.connect(lambda: self._update_processing_accordion_summary())
         hist_meth_row.addWidget(hist_meth_lbl)
         hist_meth_row.addWidget(self.adv_stretch_combo, 1)
         adv_layout.addLayout(hist_meth_row)
 
-        self.adv_settings_container.setVisible(False)
-        layout.addWidget(self.adv_settings_container)
+        self.adv_settings_container.setVisible(True)
+        self.acc_nested_adv_settings.content_layout.addWidget(self.adv_settings_container)
+        self.nested_accordion_group.add_section(self.acc_nested_adv_settings)
+        layout.addWidget(self.acc_nested_adv_settings)
 
-        # Informasi sebelum proses (frame counts, flat status)
-        pre_grid = QGridLayout()
-        self._populate_key_value_grid(
-            pre_grid,
-            _PROC_INFO_ROWS,
-            key_min_width=112,
-            target_keys=self._proc_keys,
-            target_values=self._proc_values,
-        )
-        layout.addLayout(pre_grid)
-
-        # Flat Calibration (Opsional)
-        self.flat_checkbox = QCheckBox("Apply Flat Calibration (Opsional)")
-        self.flat_checkbox.setChecked(False)
-        self.flat_checkbox.toggled.connect(self._on_flat_checkbox_toggled)
-        layout.addWidget(self.flat_checkbox)
+        # 2. Nested: Kalibrasi Flat-Field
+        self.acc_nested_flat_calib = AccordionSection("Kalibrasi Flat-Field", is_nested=True)
+        flat_calib_box = QFrame()
+        flat_calib_box.setObjectName("fullHeaderBox")
+        flat_calib_layout = QVBoxLayout(flat_calib_box)
+        flat_calib_layout.setContentsMargins(8, 8, 8, 8)
+        flat_calib_layout.setSpacing(6)
 
         flat_type_row = QHBoxLayout()
         flat_type_row.setSpacing(6)
@@ -1237,9 +2246,10 @@ class MainWindow(QMainWindow):
             "Flat Frame Sequence — SER (.SER)", "ser"
         )
         self.flat_input_type_combo.setEnabled(False)
+        self.flat_input_type_combo.currentIndexChanged.connect(lambda: self._update_processing_accordion_summary())
         flat_type_row.addWidget(flat_type_lbl)
         flat_type_row.addWidget(self.flat_input_type_combo, 1)
-        layout.addLayout(flat_type_row)
+        flat_calib_layout.addLayout(flat_type_row)
 
         flat_btn_row = QHBoxLayout()
         flat_btn_row.setSpacing(6)
@@ -1248,9 +2258,11 @@ class MainWindow(QMainWindow):
         self.select_flat_button.setEnabled(False)
         self.select_flat_button.clicked.connect(self.select_master_flat_dialog)
 
+        # Fitur kalibrasi flat mandiri disembunyikan; kalibrasi terintegrasi di 'Mulai Pemrosesan Otomatis'
         self.start_calibration_button = QPushButton("Start Calibration")
         self.start_calibration_button.setObjectName("secondaryButton")
         self.start_calibration_button.setEnabled(False)
+        self.start_calibration_button.setVisible(False)
         self.start_calibration_button.clicked.connect(self.start_flat_calibration)
 
         self.preview_flat_button = QPushButton("Preview Flat")
@@ -1264,16 +2276,21 @@ class MainWindow(QMainWindow):
         self.clear_flat_button.clicked.connect(self.clear_master_flat)
 
         flat_btn_row.addWidget(self.select_flat_button, 1)
-        flat_btn_row.addWidget(self.start_calibration_button, 1)
         flat_btn_row.addWidget(self.preview_flat_button, 0)
         flat_btn_row.addWidget(self.clear_flat_button, 0)
-        layout.addLayout(flat_btn_row)
+        flat_calib_layout.addLayout(flat_btn_row)
 
         self.flat_file_label = QLabel("Master Flat: Tidak digunakan")
         self.flat_file_label.setObjectName("infoKey")
         self.flat_file_label.setWordWrap(True)
-        layout.addWidget(self.flat_file_label)
+        flat_calib_layout.addWidget(self.flat_file_label)
 
+        self.acc_nested_flat_calib.content_layout.addWidget(flat_calib_box)
+        self.nested_accordion_group.add_section(self.acc_nested_flat_calib)
+        layout.addWidget(self.acc_nested_flat_calib)
+
+        # 3. Nested: Informasi Master Flat
+        self.acc_nested_flat_info = AccordionSection("Informasi Master Flat", is_nested=True)
         self.flat_details_container = QFrame()
         self.flat_details_container.setObjectName("fullHeaderBox")
         flat_det_layout = QVBoxLayout(self.flat_details_container)
@@ -1293,56 +2310,13 @@ class MainWindow(QMainWindow):
             target_values=self._proc_values,
         )
         flat_det_layout.addLayout(flat_det_grid)
-        self.flat_details_container.setVisible(False)
-        layout.addWidget(self.flat_details_container)
+        self.flat_details_container.setVisible(True)
+        self.acc_nested_flat_info.content_layout.addWidget(self.flat_details_container)
+        self.nested_accordion_group.add_section(self.acc_nested_flat_info)
+        layout.addWidget(self.acc_nested_flat_info)
 
-        # B. TOMBOL UTAMA: Mulai Pemrosesan Otomatis & Cancel
-        auto_action_row = QHBoxLayout()
-        auto_action_row.setSpacing(8)
-        self.start_auto_process_button = QPushButton("Mulai Pemrosesan Otomatis")
-        self.start_auto_process_button.setObjectName("startAutoProcessButton")
-        self.start_auto_process_button.setEnabled(False)
-        self.start_auto_process_button.clicked.connect(self._on_start_auto_process_clicked)
-
-        self.cancel_pipeline_button = QPushButton("Cancel")
-        self.cancel_pipeline_button.setObjectName("secondaryButton")
-        self.cancel_pipeline_button.setEnabled(False)
-        self.cancel_pipeline_button.clicked.connect(self.cancel_automated_pipeline)
-
-        auto_action_row.addWidget(self.start_auto_process_button, 1)
-        auto_action_row.addWidget(self.cancel_pipeline_button, 0)
-        layout.addLayout(auto_action_row)
-
-        # Tombol Khusus Stacking Saja (Kompatibilitas Penuh)
-        stacking_only_row = QHBoxLayout()
-        stacking_only_row.setSpacing(8)
-        self.start_stacking_button = QPushButton("Mulai Stacking (Hanya Stacking)")
-        self.start_stacking_button.setObjectName("startStackingButton")
-        self.start_stacking_button.setEnabled(False)
-        self.start_stacking_button.clicked.connect(self._on_start_stacking_clicked)
-
-        self.cancel_stacking_button = QPushButton("Cancel Stacking")
-        self.cancel_stacking_button.setObjectName("secondaryButton")
-        self.cancel_stacking_button.setEnabled(False)
-        self.cancel_stacking_button.clicked.connect(self.cancel_stacking)
-
-        stacking_only_row.addWidget(self.start_stacking_button, 1)
-        stacking_only_row.addWidget(self.cancel_stacking_button, 0)
-        layout.addLayout(stacking_only_row)
-
-        # Progress bar & status proses pipeline
-        self.stacking_progress_bar = QProgressBar()
-        self.stacking_progress_bar.setRange(0, 100)
-        self.stacking_progress_bar.setValue(0)
-        self.stacking_progress_bar.setVisible(False)
-        layout.addWidget(self.stacking_progress_bar)
-
-        self.stacking_status_label = QLabel("Belum ada proses pemrosesan.")
-        self.stacking_status_label.setObjectName("infoKey")
-        self.stacking_status_label.setWordWrap(True)
-        layout.addWidget(self.stacking_status_label)
-
-        # Pratinjau Interaktif (Preview Mode Selector & Before/After Toggle)
+        # 4. Nested: Tampilan Pratinjau (Preview Controls)
+        self.acc_nested_preview = AccordionSection("Tampilan Pratinjau", is_nested=True)
         self.preview_controls_box = QFrame()
         self.preview_controls_box.setObjectName("fullHeaderBox")
         prev_ctrl_layout = QVBoxLayout(self.preview_controls_box)
@@ -1353,11 +2327,11 @@ class MainWindow(QMainWindow):
         prev_ctrl_title.setObjectName("subSectionHeader")
         prev_ctrl_layout.addWidget(prev_ctrl_title)
 
-        prev_row = QHBoxLayout()
-        prev_row.setSpacing(6)
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(6)
         prev_mode_lbl = QLabel("Mode:")
         prev_mode_lbl.setObjectName("infoKey")
-        prev_mode_lbl.setMinimumWidth(44)
+        prev_mode_lbl.setFixedWidth(44)
         self.preview_mode_combo = QComboBox()
         self.preview_mode_combo.addItem("Final Display (Stretch)", PreviewMode.FINAL_DISPLAY.value)
         self.preview_mode_combo.addItem("Enhanced (CLAHE)", PreviewMode.ENHANCED.value)
@@ -1366,20 +2340,29 @@ class MainWindow(QMainWindow):
         self.preview_mode_combo.addItem("Original (Sebelum Proses)", PreviewMode.ORIGINAL.value)
         self.preview_mode_combo.currentIndexChanged.connect(self._on_preview_mode_changed)
 
+        mode_row.addWidget(prev_mode_lbl)
+        mode_row.addWidget(self.preview_mode_combo, 1)
+        prev_ctrl_layout.addLayout(mode_row)
+
         self.toggle_before_after_button = QPushButton("Before / After")
         self.toggle_before_after_button.setObjectName("toggleBeforeAfterButton")
+        self.toggle_before_after_button.setIcon(
+            create_themed_vector_icon("eye", night_vision=self._is_night_vision, size=15)
+        )
+        self.toggle_before_after_button.setIconSize(QSize(15, 15))
         self.toggle_before_after_button.setCheckable(True)
+        self.toggle_before_after_button.setMinimumHeight(28)
+        self.toggle_before_after_button.setToolTip("Bandingkan tampilan hasil pemrosesan dengan citra asli sebelum proses")
         self.toggle_before_after_button.clicked.connect(self._on_toggle_before_after_clicked)
+        prev_ctrl_layout.addWidget(self.toggle_before_after_button)
 
-        prev_row.addWidget(prev_mode_lbl)
-        prev_row.addWidget(self.preview_mode_combo, 1)
-        prev_row.addWidget(self.toggle_before_after_button, 0)
-        prev_ctrl_layout.addLayout(prev_row)
+        self.preview_controls_box.setVisible(True)
+        self.acc_nested_preview.content_layout.addWidget(self.preview_controls_box)
+        self.nested_accordion_group.add_section(self.acc_nested_preview)
+        layout.addWidget(self.acc_nested_preview)
 
-        self.preview_controls_box.setVisible(False)
-        layout.addWidget(self.preview_controls_box)
-
-        # Grafik Histogram Sebelum / Sesudah
+        # 5. Nested: Histogram Sebelum & Sesudah (disembunyikan dari UI; analisis histogram lengkap tersedia di jendela Histogram)
+        self.acc_nested_histogram = AccordionSection("Histogram Sebelum & Sesudah", is_nested=True)
         self.histogram_container = QFrame()
         self.histogram_container.setObjectName("fullHeaderBox")
         hist_layout = QVBoxLayout(self.histogram_container)
@@ -1397,16 +2380,33 @@ class MainWindow(QMainWindow):
         hist_layout.addWidget(self.histogram_chart_label)
 
         self.histogram_container.setVisible(False)
-        layout.addWidget(self.histogram_container)
+        self.acc_nested_histogram.content_layout.addWidget(self.histogram_container)
+        self.acc_nested_histogram.setVisible(False)
 
-        # Hasil Stacking & Pipeline
+        # 6. Nested: Hasil Pemrosesan
+        self.acc_nested_results = AccordionSection("Hasil Pemrosesan", is_nested=True)
         self.stacking_result_container = QFrame()
         self.stacking_result_container.setObjectName("fullHeaderBox")
         res_layout = QVBoxLayout(self.stacking_result_container)
         res_layout.setContentsMargins(8, 8, 8, 8)
         res_layout.setSpacing(6)
 
-        res_title = QLabel("HASIL PEMROSESAN")
+        # Informasi status data sebelum proses
+        pre_title = QLabel("STATUS DATA & METODE")
+        pre_title.setObjectName("subSectionHeader")
+        res_layout.addWidget(pre_title)
+
+        pre_grid = QGridLayout()
+        self._populate_key_value_grid(
+            pre_grid,
+            _PROC_INFO_ROWS,
+            key_min_width=112,
+            target_keys=self._proc_keys,
+            target_values=self._proc_values,
+        )
+        res_layout.addLayout(pre_grid)
+
+        res_title = QLabel("HASIL AKHIR PEMROSESAN")
         res_title.setObjectName("subSectionHeader")
         res_layout.addWidget(res_title)
 
@@ -1447,15 +2447,23 @@ class MainWindow(QMainWindow):
         save_btn_layout.addWidget(self.save_result_button)
         res_layout.addLayout(save_btn_layout)
 
-        self.stacking_result_container.setVisible(False)
-        layout.addWidget(self.stacking_result_container)
+        self.stacking_result_container.setVisible(True)
+        self.acc_nested_results.content_layout.addWidget(self.stacking_result_container)
+        self.nested_accordion_group.add_section(self.acc_nested_results)
+        layout.addWidget(self.acc_nested_results)
+
+        # Default state: semua nested accordion tertutup (Persyaratan No. 10)
+        self.nested_accordion_group.collapse_all()
+
+        # Inisialisasi ringkasan awal
+        self._update_processing_accordion_summary()
         return card
 
     def _build_info_panel(self) -> QFrame:
         self.info_panel = QFrame()
         self.info_panel.setObjectName("infoPanel")
         self.info_panel.setMinimumWidth(340)
-        self.info_panel.setMaximumWidth(420)
+        self.info_panel.setMaximumWidth(440)
         self.info_panel.setSizePolicy(
             QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Expanding,
@@ -1484,17 +2492,18 @@ class MainWindow(QMainWindow):
         self.info_scroll_content.setObjectName("infoScrollContent")
         content_layout = QVBoxLayout(self.info_scroll_content)
         content_layout.setContentsMargins(0, 0, 4, 0)
-        content_layout.setSpacing(10)
+        content_layout.setSpacing(6)
 
+        # 5 Bagian Utama Accordion
         self.section_input_sequence, self.header_input_sequence = self._create_section_card(
             "A. INPUT & SEQUENCE", _SECTION_A_ROWS
         )
         self.section_processing = self._build_processing_card()
         self.section_image_info, self.header_image_info = self._create_section_card(
-            "B. IMAGE INFORMATION", _SECTION_B_ROWS
+            "C. IMAGE INFORMATION", _SECTION_B_ROWS
         )
         self.section_sensor_info, self.header_sensor_info = self._create_section_card(
-            "C. SENSOR INFORMATION", _SECTION_C_ROWS
+            "D. SENSOR INFORMATION", _SECTION_C_ROWS
         )
         self.section_camera_metadata, self.header_camera_metadata = self._create_section_card(
             "Metadata RAW", _SECTION_RAW_ROWS
@@ -1506,6 +2515,36 @@ class MainWindow(QMainWindow):
         self.section_ser_info, self.header_ser_info = self._create_section_card(
             "Informasi SER", _SECTION_SER_ROWS
         )
+
+        # Accordion Utama Eksklusif: membuka satu bagian utama otomatis menutup yang lain
+        self.main_accordion_group = AccordionGroup(exclusive=True)
+        self.main_accordion_group.add_section(self.section_input_sequence)
+        self.main_accordion_group.add_section(self.section_processing)
+        self.main_accordion_group.add_section(self.section_image_info)
+        self.main_accordion_group.add_section(self.section_sensor_info)
+        self.main_accordion_group.add_section(self.section_camera_metadata)
+        self.main_accordion_group.add_section(self.section_fits_info)
+        self.main_accordion_group.add_section(self.section_video_info)
+        self.main_accordion_group.add_section(self.section_ser_info)
+
+        # Default State (Persyaratan No. 10):
+        # - INPUT & SEQUENCE: Collapsed
+        # - AUTOMATED IMAGE PROCESSING: Expanded
+        # - IMAGE INFORMATION: Collapsed
+        # - SENSOR INFORMATION: Collapsed
+        # - Format metadata khusus: Collapsed & tersembunyi sampai jenis berkas dimuat
+        self.section_input_sequence.set_expanded(False)
+        self.section_processing.set_expanded(True)
+        self.section_image_info.set_expanded(False)
+        self.section_sensor_info.set_expanded(False)
+        self.section_camera_metadata.set_expanded(False)
+        self.section_camera_metadata.setVisible(False)
+        self.section_fits_info.set_expanded(False)
+        self.section_fits_info.setVisible(False)
+        self.section_video_info.set_expanded(False)
+        self.section_video_info.setVisible(False)
+        self.section_ser_info.set_expanded(False)
+        self.section_ser_info.setVisible(False)
 
         content_layout.addWidget(self.section_input_sequence)
         content_layout.addWidget(self.section_processing)
@@ -1521,7 +2560,63 @@ class MainWindow(QMainWindow):
         outer_layout.addWidget(self.info_scroll_area, 1)
         return self.info_panel
 
+    def _update_processing_accordion_summary(self) -> None:
+        """Memperbarui teks ringkasan dinamis pada header Accordion Processing dan sub-kelompok nested-nya."""
+        if not hasattr(self, "section_processing"):
+            return
+        prof_name = self.profile_combo.currentText().split("—")[0].strip()
+        flat_str = "Flat On" if self.flat_checkbox.isChecked() else "No Flat"
+        if self._last_pipeline_result is not None:
+            status_str = "Selesai"
+        elif self._is_pipeline_running() or self._is_stacking_running():
+            status_str = "Memproses..."
+        else:
+            status_str = "Ready"
+        self.section_processing.set_summary(f"{prof_name} | {flat_str} | {status_str}")
+
+        if hasattr(self, "acc_nested_adv_settings"):
+            bg_txt = self.adv_bg_method_combo.currentText()
+            if "Polinomial Derajat 1" in bg_txt:
+                bg_short = "Poly 1"
+            elif "Polinomial Derajat 2" in bg_txt:
+                bg_short = "Poly 2"
+            elif "Thin Plate" in bg_txt:
+                bg_short = "TPS RBF"
+            else:
+                bg_short = "Auto RBF"
+            clahe_short = "CLAHE On" if self.adv_clahe_enable_checkbox.isChecked() else "CLAHE Off"
+            self.acc_nested_adv_settings.set_summary(f"{bg_short} | {clahe_short}")
+
+        if hasattr(self, "acc_nested_flat_calib"):
+            if self.flat_checkbox.isChecked():
+                flat_type_txt = self.flat_input_type_combo.currentText().split("(")[0].strip()
+                if len(flat_type_txt) > 16:
+                    flat_type_txt = flat_type_txt[:14] + ".."
+                self.acc_nested_flat_calib.set_summary(flat_type_txt)
+            else:
+                self.acc_nested_flat_calib.set_summary("Nonaktif")
+
+        if hasattr(self, "acc_nested_preview"):
+            mode_txt = self.preview_mode_combo.currentText().split("(")[0].strip()
+            self.acc_nested_preview.set_summary(mode_txt)
+
+        if hasattr(self, "acc_nested_histogram"):
+            if self._last_pipeline_result is not None and self._last_pipeline_result.histogram_result.histogram_chart_preview is not None:
+                self.acc_nested_histogram.set_summary("Grafik Terkini")
+            else:
+                self.acc_nested_histogram.set_summary("Belum ada grafik")
+
+        if hasattr(self, "acc_nested_results"):
+            if self._last_pipeline_result is not None:
+                self.acc_nested_results.set_summary(f"Selesai ({self._last_pipeline_result.profile.value})")
+            elif self._last_stacking_result is not None:
+                self.acc_nested_results.set_summary(f"Selesai ({self._last_stacking_result.stacked_frame_count} Frame)")
+            else:
+                self.acc_nested_results.set_summary("Belum diproses")
+
     def _set_row_visible(self, key: str, visible: bool) -> None:
+        if key == "fits_full_header":
+            return
         if key in self._info_keys:
             self._info_keys[key].setVisible(visible)
         if key in self._info_values:
@@ -1610,12 +2705,13 @@ class MainWindow(QMainWindow):
 
     def load_video_path(self, path: str | Path) -> bool:
         """Memuat berkas video ke dalam SequenceManager secara *lazy*."""
+        t0 = time.perf_counter()
         try:
             report = self.sequence_manager.open_video_file(path)
         except ImageReadError as err:
             self._show_error(str(err))
             return False
-        return self._finalize_sequence_open(report.warnings)
+        return self._finalize_sequence_open(report.warnings, elapsed_sec=time.perf_counter() - t0)
 
     def _ser_file_dialog_filter(self) -> str:
         """Filter dialog untuk berkas SER yang didukung."""
@@ -1641,6 +2737,7 @@ class MainWindow(QMainWindow):
         endianness_policy: str = "siril_default",
     ) -> bool:
         """Memuat berkas SER ke dalam SequenceManager secara *lazy*."""
+        t0 = time.perf_counter()
         try:
             report = self.sequence_manager.open_ser_file(
                 path, endianness_policy=endianness_policy
@@ -1648,7 +2745,7 @@ class MainWindow(QMainWindow):
         except ImageReadError as err:
             self._show_error(str(err))
             return False
-        return self._finalize_sequence_open(report.warnings)
+        return self._finalize_sequence_open(report.warnings, elapsed_sec=time.perf_counter() - t0)
 
     def _ask_tiff_page(self, path: Path, pages: tuple[TiffPageSummary, ...]) -> int | None:
         items = [p.label() for p in pages]
@@ -1696,6 +2793,7 @@ class MainWindow(QMainWindow):
         hdu_index: int | None = None,
     ) -> bool:
         """Memuat satu berkas gambar (Single Image; stacking_required = False)."""
+        t0 = time.perf_counter()
         path = Path(path)
         try:
             loaded = self.sequence_manager.open_single_file(
@@ -1719,12 +2817,38 @@ class MainWindow(QMainWindow):
 
         self._last_stacking_result = None
         self._current_file_name = loaded.info.file_name
+        self._current_info = loaded.info
         self._refresh_sequence_controls()
         self._refresh_processing_controls()
         entry = self.sequence_manager.entries[0]
+        self._active_original_qimage = loaded.preview.copy()
+        self._original_unprocessed_qimage = loaded.preview.copy()
+        self._on_the_fly_previews = {}
         self.viewer.set_image(loaded.preview, loaded.scientific_data)
+        if self.curves_window is not None and self.curves_window.isVisible():
+            self.curves_window.set_source_data(loaded.scientific_data, loaded.preview, loaded.info.file_name)
+        if self.info_dialog is not None and self.info_dialog.isVisible():
+            self.open_image_information_dialog()
         self._show_info(loaded.info, entry)
         self.close_button.setEnabled(True)
+
+        # Sinkronisasi Panel B (Frame List) & Panel C (Image Info)
+        if hasattr(self, "panel_b"):
+            self.panel_b.populate_sequence(self.sequence_manager.entries)
+            self.panel_b.set_active_index(0)
+        if hasattr(self, "panel_c"):
+            self.panel_c.update_info(entry)
+
+        # Logging terstruktur & update histogram jika aktif
+        dt = time.perf_counter() - t0
+        self.log_manager.info(
+            "INPUT",
+            "Single Image Dibuka",
+            f"{loaded.info.file_name} ({loaded.info.width} × {loaded.info.height} px, {loaded.info.channels or 1} kanal) | Total waktu: {dt:.2f}s",
+        )
+        if self.histogram_window is not None and self.histogram_window.isVisible():
+            self.histogram_window.set_image_data(loaded.scientific_data, loaded.info.file_name)
+
         if hasattr(self, "status_file_info"):
             self.status_file_info.setText(loaded.info.file_name)
             self.status_res_info.setText(f"{loaded.info.width} × {loaded.info.height} px")
@@ -1738,12 +2862,13 @@ class MainWindow(QMainWindow):
 
     def load_folder_sequence(self, folder_path: str | Path, sort_by: str = "natural") -> bool:
         """Memuat seluruh gambar yang didukung dari sebuah folder."""
+        t0 = time.perf_counter()
         try:
             report = self.sequence_manager.open_folder(folder_path, sort_by=sort_by)
         except ImageReadError as err:
             self._show_error(str(err))
             return False
-        return self._finalize_sequence_open(report.warnings)
+        return self._finalize_sequence_open(report.warnings, elapsed_sec=time.perf_counter() - t0)
 
     def load_sequence_paths(
         self,
@@ -1751,14 +2876,15 @@ class MainWindow(QMainWindow):
         sort_by: str = "natural",
     ) -> bool:
         """Memuat banyak berkas gambar sekaligus ke dalam SequenceManager."""
+        t0 = time.perf_counter()
         try:
             report = self.sequence_manager.open_files(paths, sort_by=sort_by)
         except ImageReadError as err:
             self._show_error(str(err))
             return False
-        return self._finalize_sequence_open(report.warnings)
+        return self._finalize_sequence_open(report.warnings, elapsed_sec=time.perf_counter() - t0)
 
-    def _finalize_sequence_open(self, warnings: tuple[str, ...]) -> bool:
+    def _finalize_sequence_open(self, warnings: tuple[str, ...], elapsed_sec: float = 0.0) -> bool:
         self._last_stacking_result = None
         self._refresh_sequence_controls()
         self._refresh_processing_controls()
@@ -1767,6 +2893,21 @@ class MainWindow(QMainWindow):
         target_idx = self.sequence_manager.compatibility_report.reference_frame_index
         if target_idx is None:
             target_idx = 0
+
+        # Sinkronisasi Panel B (Frame List)
+        if hasattr(self, "panel_b"):
+            self.panel_b.populate_sequence(self.sequence_manager.entries)
+            self.panel_b.set_active_index(target_idx)
+
+        # Logging terstruktur
+        mode_str = self._format_mode_text()
+        self.log_manager.info(
+            "INPUT",
+            "Sequence Berhasil Dimuat",
+            f"Mode: {mode_str} | Total: {self.sequence_manager.frame_count} frame | "
+            f"Kompatibel: {self.sequence_manager.compatibility_report.compatible_count} | Total waktu: {elapsed_sec:.2f}s",
+        )
+
         self.select_sequence_frame(target_idx, show_error_dialog=False)
 
         if warnings:
@@ -1812,8 +2953,27 @@ class MainWindow(QMainWindow):
 
         updated_entry = self.sequence_manager.entries[index]
         self._current_file_name = loaded.info.file_name
+        self._current_info = loaded.info
+        self._active_original_qimage = loaded.preview.copy()
+        self._original_unprocessed_qimage = loaded.preview.copy()
+        self._on_the_fly_previews = {}
         self.viewer.set_image(loaded.preview, loaded.scientific_data)
+        if self.curves_window is not None and self.curves_window.isVisible():
+            self.curves_window.set_source_data(loaded.scientific_data, loaded.preview, loaded.info.file_name)
+        if self.info_dialog is not None and self.info_dialog.isVisible():
+            self.open_image_information_dialog()
         self._show_info(loaded.info, updated_entry)
+
+        # Sinkronisasi Panel B & C
+        if hasattr(self, "panel_b"):
+            self.panel_b.set_active_index(index)
+        if hasattr(self, "panel_c"):
+            self.panel_c.update_info(updated_entry)
+
+        # Update histogram jika jendela histogram sedang terbuka
+        if self.histogram_window is not None and self.histogram_window.isVisible():
+            self.histogram_window.set_image_data(loaded.scientific_data, loaded.info.file_name)
+
         if hasattr(self, "status_file_info"):
             self.status_file_info.setText(loaded.info.file_name)
             self.status_res_info.setText(f"{loaded.info.width} × {loaded.info.height} px")
@@ -1860,6 +3020,7 @@ class MainWindow(QMainWindow):
 
     def close_image(self) -> None:
         """Mengosongkan viewer, sequence manager, dan panel informasi (berkas di disk tidak disentuh)."""
+        t0 = time.perf_counter()
         self.sequence_manager.clear()
         self.viewer.clear_image()
         self._clear_full_fits_header_grid()
@@ -1868,7 +3029,10 @@ class MainWindow(QMainWindow):
         self.header_camera_metadata.setText("Metadata RAW")
         self.header_fits_info.setText("Informasi FITS")
         self.fits_full_header_toggle.setChecked(False)
-        self.fits_full_header_toggle.setText("▶ Header FITS Lengkap")
+        self.fits_full_header_toggle.setIcon(
+            create_themed_vector_icon("chevron-right", night_vision=self._is_night_vision, size=14)
+        )
+        self.fits_full_header_toggle.setText("Header FITS Lengkap")
         self.fits_full_header_container.setVisible(False)
         for key, label in self._info_values.items():
             label.setText(EMPTY_VALUE)
@@ -1877,24 +3041,77 @@ class MainWindow(QMainWindow):
         self.section_fits_info.setVisible(False)
         self.section_video_info.setVisible(False)
         self.section_ser_info.setVisible(False)
+        if hasattr(self, "section_input_sequence"):
+            self.section_input_sequence.set_summary("")
+            self.section_input_sequence.set_expanded(False)
+        if hasattr(self, "section_image_info"):
+            self.section_image_info.set_summary("")
+            self.section_image_info.set_expanded(False)
+        if hasattr(self, "section_sensor_info"):
+            self.section_sensor_info.set_summary("")
+            self.section_sensor_info.set_expanded(False)
+        if hasattr(self, "section_video_info"):
+            self.section_video_info.set_summary("")
+            self.section_video_info.set_expanded(False)
+        if hasattr(self, "section_ser_info"):
+            self.section_ser_info.set_summary("")
+            self.section_ser_info.set_expanded(False)
+        if hasattr(self, "section_fits_info"):
+            self.section_fits_info.set_summary("")
+            self.section_fits_info.set_expanded(False)
+        if hasattr(self, "section_camera_metadata"):
+            self.section_camera_metadata.set_summary("")
+            self.section_camera_metadata.set_expanded(False)
+        if hasattr(self, "section_processing"):
+            self.section_processing.set_expanded(True)
+            self._update_processing_accordion_summary()
+        if hasattr(self, "nested_accordion_group"):
+            self.nested_accordion_group.collapse_all()
         self._last_pipeline_result = None
         self._last_stacking_result = None
         self._current_protected_roi = None
         self.viewer.set_roi_rect(None)
         self.viewer.roi_selection_enabled = False
-        self.roi_select_button.setChecked(False)
-        self.roi_clear_button.setEnabled(False)
-        self.roi_status_label.setText("ROI: Tidak ada (seluruh citra disampel)")
-        self.preview_controls_box.setVisible(False)
+        if hasattr(self, "roi_select_button"):
+            self.roi_select_button.setChecked(False)
+        if hasattr(self, "roi_clear_button"):
+            self.roi_clear_button.setEnabled(False)
+        if hasattr(self, "roi_status_label"):
+            self.roi_status_label.setText("ROI: Tidak ada (seluruh citra disampel)")
+        self.preview_controls_box.setVisible(True)
         self.histogram_container.setVisible(False)
         self.histogram_chart_label.clear()
         self.toggle_before_after_button.setChecked(False)
+        self.toggle_before_after_button.setText("Before / After")
         self._is_showing_before = False
+        self._active_original_qimage = None
+        self._original_unprocessed_qimage = None
+        self._on_the_fly_previews = {}
+        if self.curves_window is not None and self.curves_window.isVisible():
+            self.curves_window.set_source_data(None, None, "Tidak ada gambar")
         self._refresh_processing_controls()
         self._refresh_sequence_controls()
         self._refresh_processing_controls()
         self.close_button.setEnabled(False)
         self._current_file_name = ""
+        self._current_info = None
+
+        # Bersihkan Panel B & Panel C
+        if hasattr(self, "panel_b"):
+            self.panel_b.clear()
+        if hasattr(self, "panel_c"):
+            self.panel_c.update_info(None)
+
+        if self.info_dialog is not None and self.info_dialog.isVisible():
+            self.info_dialog.populate_metadata([], "Tidak ada berkas aktif")
+
+        # Reset Histogram jika aktif
+        if self.histogram_window is not None and self.histogram_window.isVisible():
+            self.histogram_window.set_image_data(None, "Tidak ada gambar")
+
+        dt = time.perf_counter() - t0
+        self.log_manager.info("INPUT", "Citra Ditutup", f"Ruang kerja telah dibersihkan | Total waktu: {dt:.2f}s")
+
         if hasattr(self, "state_manager"):
             self.state_manager.transition_to(ProcessingState.IDLE)
         self._set_input_controls_enabled(True)
@@ -1953,6 +3170,8 @@ class MainWindow(QMainWindow):
             for k in _MULTI_ONLY_KEYS:
                 self._set_row(k, EMPTY_VALUE, visible=False)
             self._info_values["sequence_info"].setText("1 frame (berkas tunggal)")
+            if hasattr(self, "section_input_sequence"):
+                self.section_input_sequence.set_summary("1 Frame | Single Image")
             return
 
         ready_txt = "Siap" if rep.is_ready_for_stacking else "Tidak siap"
@@ -1976,6 +3195,11 @@ class MainWindow(QMainWindow):
         self._set_row("structural_readiness", ready_txt, visible=True)
         self._set_row("stacking_note", "\n".join(note_lines), visible=True)
         self._set_row("sequence_info", self._format_sequence_summary(entry), visible=False)
+        if hasattr(self, "section_input_sequence"):
+            status_summary = "Ready" if rep.is_ready_for_stacking else "Not Ready"
+            self.section_input_sequence.set_summary(
+                f"{rep.total_files} Frames | {rep.compatible_count} Kompatibel | {status_summary}"
+            )
 
     def _populate_section_b_image_info(self, info: ImageInfo) -> None:
         self._set_row("file_name", info.file_name, visible=True)
@@ -1995,6 +3219,11 @@ class MainWindow(QMainWindow):
         self._set_row("width", f"{info.width} px", visible=True)
         self._set_row("height", f"{info.height} px", visible=True)
         self._set_row("orientation", format_orientation(info), visible=True)
+        if hasattr(self, "section_image_info"):
+            fname = info.file_name
+            if len(fname) > 18:
+                fname = fname[:15] + "..."
+            self.section_image_info.set_summary(f"{fname} | {info.width} × {info.height} px")
 
     def _populate_section_c_sensor_info(self, info: ImageInfo) -> None:
         raw_meta = info.raw_metadata
@@ -2026,6 +3255,14 @@ class MainWindow(QMainWindow):
 
         self._set_row("preview_info", format_preview_channels_and_depth(info), visible=True)
         self._set_row("bit_depth", format_bit_depth(info), visible=True)
+        if hasattr(self, "section_sensor_info"):
+            ch_str = "Mono" if info.channels == 1 else "RGB"
+            dtype_str = info.dtype_str or "uint8"
+            depth_str = f"{info.original_bit_depth}-bit" if info.original_bit_depth else ""
+            summary_parts = [ch_str, dtype_str]
+            if depth_str:
+                summary_parts.append(depth_str)
+            self.section_sensor_info.set_summary(" | ".join(summary_parts))
 
     def _populate_fits_full_header_cards(
         self,
@@ -2042,10 +3279,20 @@ class MainWindow(QMainWindow):
             key_lbl.setMinimumWidth(84)
             key_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
-            if val_str and comment_str:
-                rhs = f"{val_str}  / {comment_str}"
-            elif val_str:
-                rhs = val_str
+            # Format EXPTIME / EXPOSURE ke tampilan '0.00 s' agar bersih dan nyaman dibaca pengguna
+            disp_val = val_str
+            if kw.upper() in ("EXPTIME", "EXPOSURE") and val_str:
+                try:
+                    sec_val = float(val_str)
+                    if math.isfinite(sec_val) and sec_val >= 0.0:
+                        disp_val = f"{sec_val:.2f} s"
+                except (ValueError, TypeError):
+                    disp_val = val_str
+
+            if disp_val and comment_str:
+                rhs = f"{disp_val}  / {comment_str}"
+            elif disp_val:
+                rhs = disp_val
             else:
                 rhs = f"/ {comment_str}" if comment_str else ""
 
@@ -2062,7 +3309,15 @@ class MainWindow(QMainWindow):
             self.fits_full_header_grid.addWidget(key_lbl, row_idx, 0, Qt.AlignmentFlag.AlignTop)
             self.fits_full_header_grid.addWidget(val_lbl, row_idx, 1, Qt.AlignmentFlag.AlignTop)
             self._full_fits_card_widgets.extend((key_lbl, val_lbl))
-            raw_lines.append(f"{kw} = {rhs}")
+
+            # Raw line asli tetap mempertahankan nilai presisi penuh berkas FITS asli untuk kebutuhan data/inspeksi
+            if val_str and comment_str:
+                raw_rhs = f"{val_str}  / {comment_str}"
+            elif val_str:
+                raw_rhs = val_str
+            else:
+                raw_rhs = f"/ {comment_str}" if comment_str else ""
+            raw_lines.append(f"{kw} = {raw_rhs}")
 
         self.fits_full_header_raw_label.setText("\n".join(raw_lines) if raw_lines else EMPTY_VALUE)
         self._on_fits_full_header_toggled(self.fits_full_header_toggle.isChecked())
@@ -2094,6 +3349,13 @@ class MainWindow(QMainWindow):
             self._set_row("demosaic_note", raw_meta.demosaic_note, visible=True)
             self._set_row("fits_metadata", raw_meta.summary_text(), visible=False)
             self.section_camera_metadata.setVisible(True)
+            if hasattr(self, "section_camera_metadata"):
+                cam = d.get("CAMERA") or "RAW"
+                if len(cam) > 18:
+                    cam = cam[:15] + "..."
+                iso = d.get("ISO") or ""
+                summary_str = f"{cam} | ISO {iso}" if iso and iso != RAW_UNAVAILABLE else cam
+                self.section_camera_metadata.set_summary(summary_str)
             return
 
         # Sembunyikan kartu Metadata RAW bila berkas bukan Camera RAW
@@ -2147,6 +3409,16 @@ class MainWindow(QMainWindow):
             self._set_row("video_honesty_note", vmeta.honesty_note, visible=True)
             self._set_row("fits_metadata", vmeta.summary_text(), visible=False)
             self.section_video_info.setVisible(True)
+            if hasattr(self, "section_video_info"):
+                cnt = dv.get("CONTAINER", "VIDEO")
+                fps = dv.get("FRAME_RATE", "")
+                dur = dv.get("DURATION", "")
+                parts = [cnt]
+                if fps and fps != VIDEO_UNAVAILABLE:
+                    parts.append(fps)
+                if dur and dur != VIDEO_UNAVAILABLE:
+                    parts.append(dur)
+                self.section_video_info.set_summary(" | ".join(parts[:3]))
             return
 
         self.section_video_info.setVisible(False)
@@ -2211,6 +3483,15 @@ class MainWindow(QMainWindow):
             self._set_row("ser_honesty_note", smeta.honesty_note, visible=True)
             self._set_row("fits_metadata", smeta.summary_text(), visible=False)
             self.section_ser_info.setVisible(True)
+            if hasattr(self, "section_ser_info"):
+                fc = ds.get("FRAME_COUNT", "")
+                depth = ds.get("PIXEL_DEPTH", "")
+                parts = ["SER"]
+                if fc:
+                    parts.append(f"{fc} Frames")
+                if depth:
+                    parts.append(depth)
+                self.section_ser_info.set_summary(" | ".join(parts))
             return
 
         self.section_ser_info.setVisible(False)
@@ -2262,6 +3543,15 @@ class MainWindow(QMainWindow):
 
             self._set_row("fits_metadata", fh.summary_text(), visible=False)
             self.section_fits_info.setVisible(True)
+            if hasattr(self, "section_fits_info"):
+                bitpix_val = _req(d_fits["BITPIX"])
+                dim_str = f"{d_fits.get('NAXIS1', '')} × {d_fits.get('NAXIS2', '')}"
+                parts = ["FITS"]
+                if bitpix_val and bitpix_val != FITS_UNAVAILABLE:
+                    parts.append(f"{bitpix_val}-bit")
+                if dim_str and dim_str != " × ":
+                    parts.append(dim_str)
+                self.section_fits_info.set_summary(" | ".join(parts))
         else:
             self._clear_full_fits_header_grid()
             self._set_row("fits_metadata", EMPTY_VALUE, visible=False)
@@ -2282,6 +3572,8 @@ class MainWindow(QMainWindow):
         self._populate_section_a_input_sequence(entry)
         self._set_row("file_name", entry.file_name, visible=True)
         self._set_row("file_format", "GAGAL DIBACA", visible=True)
+        if hasattr(self, "section_image_info"):
+            self.section_image_info.set_summary(f"{entry.file_name} | Gagal Dibaca")
         self.section_camera_metadata.setVisible(False)
         self.section_fits_info.setVisible(False)
         self.section_video_info.setVisible(False)
@@ -2298,7 +3590,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------- IMAGE PROCESSING (STACKING)
     def selected_stacking_profile(self) -> StackingProfile:
-        """Mengembalikan profil stacking yang sedang dipilih pada dropdown."""
+        """Mengembalikan profil stacking yang dipilih pada dropdown (default: Basic)."""
         raw_val = self.profile_combo.currentData()
         if isinstance(raw_val, StackingProfile):
             return raw_val
@@ -2306,7 +3598,7 @@ class MainWindow(QMainWindow):
             for p in StackingProfile:
                 if p.value == raw_val:
                     return p
-        return StackingProfile.MEDIUM
+        return StackingProfile.BASIC
 
     def set_stacking_profile(self, profile: StackingProfile | str) -> None:
         """Mengatur pilihan profil stacking pada dropdown."""
@@ -2315,6 +3607,8 @@ class MainWindow(QMainWindow):
             if self.profile_combo.itemData(idx) == target:
                 self.profile_combo.setCurrentIndex(idx)
                 return
+        self.profile_combo.addItem(target, target)
+        self.profile_combo.setCurrentIndex(self.profile_combo.count() - 1)
 
     def _on_profile_combo_changed(self, _index: int) -> None:
         self._refresh_processing_controls()
@@ -2520,6 +3814,7 @@ class MainWindow(QMainWindow):
         self.stacking_status_label.setText("Menjalankan Flat Calibration secara langsung...")
         self.statusBar().showMessage("Menerapkan koreksi Master Flat...")
 
+        t0 = time.perf_counter()
         try:
             from PySide6.QtCore import QCoreApplication
             from hilalone.input_manager.preview_builder import array_to_preview_qimage
@@ -2537,11 +3832,17 @@ class MainWindow(QMainWindow):
                 progress_callback=_prog,
             )
             self._last_calibrated_frames = calibrated_frames
+            dt_flat = time.perf_counter() - t0
 
             self.stacking_progress_bar.setValue(100)
             self.stacking_status_label.setText(
                 f"Kalibrasi Flat selesai: {len(calibrated_frames)} frame berhasil dikalibrasi "
                 f"({report.normalization_method})."
+            )
+            self.log_manager.success(
+                "FLAT",
+                "Kalibrasi Flat Selesai",
+                f"{len(calibrated_frames)} frame dikalibrasi ({report.normalization_method}) | Total waktu: {dt_flat:.2f}s",
             )
             if calibrated_frames:
                 prev = array_to_preview_qimage(calibrated_frames[0])
@@ -2609,6 +3910,9 @@ class MainWindow(QMainWindow):
         lf = self._loaded_master_flat
         if lf is None:
             self.flat_details_container.setVisible(False)
+            if hasattr(self, "acc_nested_flat_info"):
+                self.acc_nested_flat_info.set_summary("Tidak digunakan")
+                self.acc_nested_flat_info.set_expanded(False)
             for k, _ in _PROC_FLAT_ROWS:
                 self._set_row(k, EMPTY_VALUE, visible=False)
             return
@@ -2659,6 +3963,9 @@ class MainWindow(QMainWindow):
         self._set_row("flat_norm_status", norm_txt, visible=True)
         self._set_row("flat_invalid_pixels", inv_txt, visible=True)
         self.flat_details_container.setVisible(True)
+        if hasattr(self, "acc_nested_flat_info"):
+            badge = "KOMPATIBEL" if (compat and compat.is_compatible) else "INKOMPATIBEL"
+            self.acc_nested_flat_info.set_summary(f"{lf.flat_format} | {badge}")
 
     def _is_stacking_running(self) -> bool:
         return self._stacking_worker is not None and self._stacking_worker.isRunning()
@@ -2667,9 +3974,8 @@ class MainWindow(QMainWindow):
         return self._pipeline_worker is not None and self._pipeline_worker.isRunning()
 
     def _on_adv_settings_toggled(self, checked: bool) -> None:
-        arrow = "▼" if checked else "▶"
-        self.adv_settings_toggle.setText(f"{arrow} Pengaturan Lanjutan (Advanced Settings)")
-        self.adv_settings_container.setVisible(checked)
+        if hasattr(self, "acc_nested_adv_settings"):
+            self.acc_nested_adv_settings.set_expanded(checked)
 
     def _on_roi_select_button_clicked(self, checked: bool) -> None:
         self.viewer.roi_selection_enabled = checked
@@ -2686,9 +3992,12 @@ class MainWindow(QMainWindow):
             rect=(x, y, w, h),
             label=f"ROI ({w}×{h} px)",
         )
-        self.roi_status_label.setText(f"ROI: x={x}, y={y}, {w}×{h} px (Terlindungi)")
-        self.roi_clear_button.setEnabled(True)
-        self.roi_select_button.setChecked(False)
+        if hasattr(self, "roi_status_label"):
+            self.roi_status_label.setText(f"ROI: x={x}, y={y}, {w}×{h} px (Terlindungi)")
+        if hasattr(self, "roi_clear_button"):
+            self.roi_clear_button.setEnabled(True)
+        if hasattr(self, "roi_select_button"):
+            self.roi_select_button.setChecked(False)
         self.viewer.roi_selection_enabled = False
         self.statusBar().showMessage(f"Wilayah proteksi ditetapkan: x={x}, y={y}, {w}×{h} px.")
 
@@ -2696,12 +4005,16 @@ class MainWindow(QMainWindow):
         self._current_protected_roi = None
         self.viewer.set_roi_rect(None)
         self.viewer.roi_selection_enabled = False
-        self.roi_select_button.setChecked(False)
-        self.roi_clear_button.setEnabled(False)
-        self.roi_status_label.setText("ROI: Tidak ada (seluruh citra disampel)")
+        if hasattr(self, "roi_select_button"):
+            self.roi_select_button.setChecked(False)
+        if hasattr(self, "roi_clear_button"):
+            self.roi_clear_button.setEnabled(False)
+        if hasattr(self, "roi_status_label"):
+            self.roi_status_label.setText("ROI: Tidak ada (seluruh citra disampel)")
         self.statusBar().showMessage("Wilayah proteksi dihapus.")
 
     def selected_processing_profile(self) -> ProcessingProfile:
+        """Mengembalikan profil pemrosesan otomatis yang dipilih pada dropdown (default: Basic)."""
         raw_val = self.profile_combo.currentData()
         if isinstance(raw_val, ProcessingProfile):
             return raw_val
@@ -2709,52 +4022,111 @@ class MainWindow(QMainWindow):
             for p in ProcessingProfile:
                 if p.value == raw_val:
                     return p
-        return ProcessingProfile.MEDIUM
+        return ProcessingProfile.BASIC
 
     def set_processing_profile(self, profile: ProcessingProfile | str) -> None:
+        """Mengatur pilihan profil pemrosesan pada dropdown."""
         target = profile.value if isinstance(profile, ProcessingProfile) else str(profile).strip().upper()
         for idx in range(self.profile_combo.count()):
             if self.profile_combo.itemData(idx) == target:
                 self.profile_combo.setCurrentIndex(idx)
                 return
+        self.profile_combo.addItem(target, target)
+        self.profile_combo.setCurrentIndex(self.profile_combo.count() - 1)
+
+    def _get_or_compute_preview_for_mode(self, mode: PreviewMode) -> Any:
+        """Mengambil preview dari pipeline result jika ada, atau menghitung preview on-the-fly."""
+        # 1. Jika ada hasil pipeline resmi, gunakan preview yang sudah ada
+        if self._last_pipeline_result is not None:
+            prev = self._last_pipeline_result.previews.get(mode)
+            if prev is not None and not prev.isNull():
+                return prev
+
+        # 2. Jika belum ada pipeline result, ambil dari data aktif saat ini
+        raw_data = self._get_current_active_scientific_data()
+        if raw_data is None:
+            return self.viewer.source_qimage()
+
+        if mode == PreviewMode.ORIGINAL:
+            if hasattr(self, "_original_unprocessed_qimage") and self._original_unprocessed_qimage is not None:
+                return self._original_unprocessed_qimage
+            if hasattr(self, "_active_original_qimage") and self._active_original_qimage is not None:
+                return self._active_original_qimage
+            from hilalone.input_manager.preview_builder import array_to_preview_qimage
+            return array_to_preview_qimage(raw_data)
+
+        if not hasattr(self, "_on_the_fly_previews"):
+            self._on_the_fly_previews = {}
+
+        if mode in self._on_the_fly_previews:
+            return self._on_the_fly_previews[mode]
+
+        prof = self.selected_processing_profile()
+        try:
+            if mode == PreviewMode.FINAL_DISPLAY:
+                from hilalone.processing.histogram_engine import run_histogram_transformation
+                res = run_histogram_transformation(raw_data, config=prof)
+                self._on_the_fly_previews[mode] = res.display_preview
+                return res.display_preview
+            elif mode == PreviewMode.ENHANCED:
+                from hilalone.processing.enhancement_engine import run_image_enhancement
+                res = run_image_enhancement(raw_data, config=prof)
+                self._on_the_fly_previews[mode] = res.enhanced_preview
+                return res.enhanced_preview
+            elif mode == PreviewMode.BACKGROUND_MODEL:
+                from hilalone.processing.background_engine import run_background_extraction
+                res = run_background_extraction(raw_data, config=prof)
+                self._on_the_fly_previews[mode] = res.model_preview
+                return res.model_preview
+            elif mode == PreviewMode.BACKGROUND_CORRECTED:
+                from hilalone.processing.background_engine import run_background_extraction
+                res = run_background_extraction(raw_data, config=prof)
+                self._on_the_fly_previews[mode] = res.corrected_preview
+                return res.corrected_preview
+        except Exception as exc:
+            if hasattr(self, "log_manager"):
+                self.log_manager.warning("PREVIEW", "Kalkulasi Pratinjau", f"Gagal menghitung pratinjau mode {mode.value}: {exc}")
+
+        return self.viewer.source_qimage()
 
     def _on_preview_mode_changed(self, _index: int) -> None:
-        if self._last_pipeline_result is None:
-            return
         mode_val = self.preview_mode_combo.currentData()
         for m in PreviewMode:
             if m.value == mode_val:
                 self._preview_mode = m
                 break
         self._update_displayed_preview()
+        self._update_processing_accordion_summary()
 
     def _on_toggle_before_after_clicked(self, checked: bool) -> None:
         self._is_showing_before = checked
+        btn_txt = "Sedang Menampilkan: SEBELUM Proses" if checked else "Before / After"
+        self.toggle_before_after_button.setText(btn_txt)
         self._update_displayed_preview()
 
     def _update_displayed_preview(self) -> None:
-        if self._last_pipeline_result is None:
+        if not self.viewer.has_image():
             return
-        if self._is_showing_before:
-            img = self._last_pipeline_result.previews.get(PreviewMode.ORIGINAL)
-            self.statusBar().showMessage("Menampilkan Pratinjau: Original (Sebelum Pemrosesan)")
-        else:
-            img = self._last_pipeline_result.previews.get(self._preview_mode)
-            self.statusBar().showMessage(f"Menampilkan Pratinjau: {self._preview_mode.value}")
+
+        target_mode = PreviewMode.ORIGINAL if self._is_showing_before else self._preview_mode
+        img = self._get_or_compute_preview_for_mode(target_mode)
+
         if img is not None and not img.isNull():
             sci_target = (
                 self._last_pipeline_result.linear_result
-                if self._last_pipeline_result.linear_result is not None
-                else self._last_pipeline_result.stacked_data
+                if self._last_pipeline_result is not None and self._last_pipeline_result.linear_result is not None
+                else self._get_current_active_scientific_data()
             )
-            if sci_target is None:
-                sci_target = self._last_pipeline_result.original_data
-            self.viewer.set_image(img, sci_target)
+            self.viewer.set_image(img, sci_target, preserve_view=True)
             if hasattr(self, "image_action_toolbar"):
                 self._refresh_image_toolbar_state()
             if hasattr(self, "status_view_info"):
-                mode_str = "Sebelum Pemrosesan" if self._is_showing_before else self._preview_mode.value
+                mode_str = "Sebelum Pemrosesan (Original)" if self._is_showing_before else self._preview_mode.value
                 self.status_view_info.setText(f"Pratinjau: {mode_str}")
+            if self._is_showing_before:
+                self.statusBar().showMessage("Menampilkan Pratinjau: Original (Sebelum Pemrosesan)")
+            else:
+                self.statusBar().showMessage(f"Menampilkan Pratinjau: {self._preview_mode.value}")
 
     def _on_processing_state_changed(self, state: ProcessingState) -> None:
         """Menangani sinkronisasi status UI berdasarkan status pemrosesan aktif."""
@@ -2770,7 +4142,7 @@ class MainWindow(QMainWindow):
         self.open_ser_button.setEnabled(enabled)
         has_any_image = self.sequence_manager.frame_count > 0 or self.viewer.has_image()
         self.close_button.setEnabled(enabled and has_any_image)
-        self.profile_combo.setEnabled(enabled)
+        self.profile_combo.setEnabled(False)  # Selalu terkunci pada Basic sebagai satu-satunya profil
         self.adv_settings_toggle.setEnabled(enabled)
         self.adv_bg_method_combo.setEnabled(enabled)
         self.adv_clahe_enable_checkbox.setEnabled(enabled)
@@ -2783,8 +4155,10 @@ class MainWindow(QMainWindow):
         self.select_flat_button.setEnabled(enabled and flat_checked)
         self.preview_flat_button.setEnabled(enabled and flat_checked and has_flat)
         self.clear_flat_button.setEnabled(enabled and flat_checked and has_flat)
-        self.roi_select_button.setEnabled(enabled and has_any_image)
-        self.roi_clear_button.setEnabled(enabled and self._current_protected_roi is not None)
+        if hasattr(self, "roi_select_button"):
+            self.roi_select_button.setEnabled(enabled and has_any_image)
+        if hasattr(self, "roi_clear_button"):
+            self.roi_clear_button.setEnabled(enabled and self._current_protected_roi is not None)
         if enabled:
             self._refresh_sequence_controls()
         else:
@@ -2834,8 +4208,10 @@ class MainWindow(QMainWindow):
         )
 
         has_any_image = total > 0 or self.viewer.has_image()
-        self.roi_select_button.setEnabled(has_any_image and not is_running)
-        self.roi_clear_button.setEnabled(self._current_protected_roi is not None and not is_running)
+        if hasattr(self, "roi_select_button"):
+            self.roi_select_button.setEnabled(has_any_image and not is_running)
+        if hasattr(self, "roi_clear_button"):
+            self.roi_clear_button.setEnabled(self._current_protected_roi is not None and not is_running)
 
         flat_ready_to_click = (not flat_checked) or has_flat
 
@@ -2855,6 +4231,7 @@ class MainWindow(QMainWindow):
             self._update_result_section()
             if hasattr(self, "image_action_toolbar"):
                 self._refresh_image_toolbar_state()
+            self._update_processing_accordion_summary()
             return
 
         if mode == InputMode.SINGLE:
@@ -2877,6 +4254,7 @@ class MainWindow(QMainWindow):
             self._update_result_section()
             if hasattr(self, "image_action_toolbar"):
                 self._refresh_image_toolbar_state()
+            self._update_processing_accordion_summary()
             return
 
         # Mode MULTI, VIDEO, atau SER (stacking wajib)
@@ -2922,6 +4300,7 @@ class MainWindow(QMainWindow):
         self._update_result_section()
         if hasattr(self, "image_action_toolbar"):
             self._refresh_image_toolbar_state()
+        self._update_processing_accordion_summary()
 
     def _update_result_section(self) -> None:
         """Menampilkan atau menyembunyikan rincian hasil stacking dan pipeline terakhir."""
@@ -2930,8 +4309,12 @@ class MainWindow(QMainWindow):
 
         if pipe_res is None and stk_res is None:
             self.stacking_result_container.setVisible(False)
-            self.preview_controls_box.setVisible(False)
+            self.preview_controls_box.setVisible(True)
             self.histogram_container.setVisible(False)
+            if hasattr(self, "acc_nested_results"):
+                self.acc_nested_results.set_summary("Belum diproses")
+            if hasattr(self, "acc_nested_histogram"):
+                self.acc_nested_histogram.set_summary("Belum ada grafik")
             self.save_result_button.setEnabled(False)
             self.save_linear_fits_button.setEnabled(False)
             self.save_linear_tiff_button.setEnabled(False)
@@ -3013,6 +4396,11 @@ class MainWindow(QMainWindow):
 
             self.preview_controls_box.setVisible(True)
             self.stacking_result_container.setVisible(True)
+            if hasattr(self, "acc_nested_results"):
+                self.acc_nested_results.set_summary(f"Selesai ({pipe_res.profile.value})")
+                self.acc_nested_results.set_expanded(True)
+            if hasattr(self, "acc_nested_histogram"):
+                self.acc_nested_histogram.set_summary("Grafik Terkini")
             is_running = self._is_stacking_running() or self._is_pipeline_running()
             self.save_linear_fits_button.setEnabled(not is_running)
             self.save_linear_tiff_button.setEnabled(not is_running)
@@ -3078,7 +4466,10 @@ class MainWindow(QMainWindow):
 
         self._set_row("res_history", "\n".join(hist_lines), visible=True)
         self.stacking_result_container.setVisible(True)
-        self.preview_controls_box.setVisible(False)
+        if hasattr(self, "acc_nested_results"):
+            self.acc_nested_results.set_summary(f"Selesai ({res.stacked_frame_count} Frame)")
+            self.acc_nested_results.set_expanded(True)
+        self.preview_controls_box.setVisible(True)
         self.histogram_container.setVisible(False)
         is_running = self._is_stacking_running() or self._is_pipeline_running()
         self.save_result_button.setEnabled(not is_running)
@@ -3169,6 +4560,19 @@ class MainWindow(QMainWindow):
             )
             return False
 
+        total_frames = self.sequence_manager.frame_count
+        excluded_unselected: set[int] = set()
+        if hasattr(self, "panel_b") and total_frames > 0:
+            selected_set = set(self.panel_b.get_selected_frame_indices())
+            excluded_unselected = set(range(total_frames)) - selected_set
+            remaining_selected = total_frames - len(excluded_unselected)
+            if remaining_selected < 2:
+                self._show_error(
+                    f"Hanya {remaining_selected} frame yang dicentang pada daftar frame. "
+                    "Minimal 2 frame diperlukan untuk menjalankan stacking."
+                )
+                return False
+
         allow_exclude_invalid = False
         if len(validation.excluded_frames) > 0:
             if not self._confirm_exclude_invalid_frames(validation):
@@ -3180,6 +4584,7 @@ class MainWindow(QMainWindow):
 
         self._last_allow_exclude_invalid = allow_exclude_invalid
         return self._launch_stacking_worker(
+            excluded_frame_indices=excluded_unselected if excluded_unselected else None,
             allow_exclude_incompatible_and_error=allow_exclude_invalid,
             confirm_proceed_with_shift_risk=True,
             wait_for_completion=wait_for_completion,
@@ -3188,6 +4593,7 @@ class MainWindow(QMainWindow):
     def _launch_stacking_worker(
         self,
         *,
+        excluded_frame_indices: set[int] | None = None,
         allow_exclude_incompatible_and_error: bool,
         confirm_proceed_with_shift_risk: bool = True,
         wait_for_completion: bool = False,
@@ -3199,6 +4605,7 @@ class MainWindow(QMainWindow):
             self.sequence_manager,
             profile,
             master_flat=master_flat,
+            excluded_frame_indices=excluded_frame_indices,
             allow_exclude_incompatible_and_error=allow_exclude_incompatible_and_error,
             check_position_stability=False,
             confirm_proceed_with_shift_risk=True,
@@ -3223,6 +4630,7 @@ class MainWindow(QMainWindow):
         self.stacking_status_label.setText("Memulai proses stacking...")
         self.statusBar().showMessage(f"Menjalankan stacking ({profile.value})...")
 
+        self._stacking_start_time = time.perf_counter()
         worker.start()
 
         if wait_for_completion:
@@ -3273,11 +4681,27 @@ class MainWindow(QMainWindow):
                 f"Stacking selesai: {result_obj.stacked_frame_count} frame digabungkan dengan "
                 f"{prof_str} ({algo_str})."
             )
-            self.viewer.set_image(result_obj.preview, result_obj.stacked_scientific_data)
+            dt_stack = time.perf_counter() - getattr(self, "_stacking_start_time", time.perf_counter())
+            self.log_manager.success(
+                "STACKING",
+                "Stacking Selesai",
+                f"{result_obj.stacked_frame_count} frame digabungkan ({prof_str}, {algo_str}) | Total waktu: {dt_stack:.2f}s. Hasil siap disimpan melalui Save Result.",
+            )
+            if result_obj.preview is not None and not result_obj.preview.isNull():
+                self.viewer.set_image(
+                    result_obj.preview,
+                    result_obj.stacked_scientific_data,
+                    preserve_view=True,
+                )
+            if hasattr(self, "status_view_info"):
+                self.status_view_info.setText(f"Mode: Hasil Stacking ({prof_str})")
+            if self.histogram_window is not None and self.histogram_window.isVisible():
+                self.histogram_window.set_image_data(
+                    result_obj.stacked_scientific_data,
+                    f"{self._current_file_name or 'Citra'} (Hasil Stacking {prof_str})",
+                )
             if hasattr(self, "image_action_toolbar"):
                 self._refresh_image_toolbar_state()
-            if hasattr(self, "status_view_info"):
-                self.status_view_info.setText(f"Mode: Stacking ({prof_str})")
             self.state_manager.transition_to(ProcessingState.COMPLETED)
             self.statusBar().showMessage(
                 f"Hasil Stacking ({prof_str}): {result_obj.stacked_frame_count} frame  |  "
@@ -3289,7 +4713,7 @@ class MainWindow(QMainWindow):
             self._show_error(f"Gagal menampilkan hasil stacking: {exc}")
         finally:
             self._set_input_controls_enabled(True)
-            self._refresh_processing_controls()
+            self._refresh_processing_controls(preserve_status_label=self._cancel_requested_by_ui)
 
     def _on_stacking_cancelled(self, message: str) -> None:
         try:
@@ -3374,6 +4798,7 @@ class MainWindow(QMainWindow):
 
     def save_stacking_result_to_path(self, output_path: str | Path) -> Path | None:
         """Menyimpan hasil stacking ke ``output_path`` tanpa menimpa berkas sumber."""
+        t0 = time.perf_counter()
         if self._last_stacking_result is None:
             self._show_error("Belum ada hasil stacking untuk disimpan.")
             return None
@@ -3396,6 +4821,12 @@ class MainWindow(QMainWindow):
             return None
 
         self._last_dir = str(saved_path.parent)
+        dt_save = time.perf_counter() - t0
+        self.log_manager.success(
+            "OUTPUT",
+            "Hasil Stacking Tersimpan",
+            f"{saved_path.name} | Jalur: {saved_path} | Total waktu: {dt_save:.2f}s",
+        )
         self.stacking_status_label.setText(f"Hasil stacking disimpan ke: {saved_path.name}")
         self.statusBar().showMessage(f"Hasil stacking tersimpan: {saved_path}")
         return saved_path
@@ -3425,7 +4856,19 @@ class MainWindow(QMainWindow):
                 return False
 
         allow_exclude_invalid = False
+        excluded_unselected: set[int] = set()
         if mode in (InputMode.MULTI, InputMode.VIDEO, InputMode.SER):
+            if hasattr(self, "panel_b") and total > 0:
+                selected_set = set(self.panel_b.get_selected_frame_indices())
+                excluded_unselected = set(range(total)) - selected_set
+                remaining_selected = total - len(excluded_unselected)
+                if remaining_selected < 2:
+                    self._show_error(
+                        f"Hanya {remaining_selected} frame yang dicentang pada daftar frame. "
+                        "Minimal 2 frame diperlukan untuk pemrosesan sequence."
+                    )
+                    return False
+
             rep = self.sequence_manager.compatibility_report
             if rep.compatible_count < 2:
                 self._show_error(
@@ -3465,6 +4908,7 @@ class MainWindow(QMainWindow):
             self.sequence_manager,
             config=conf,
             master_flat=master_flat,
+            excluded_frame_indices=excluded_unselected if excluded_unselected else None,
             allow_exclude_incompatible_and_error=allow_exclude_invalid,
             confirm_proceed_with_shift_risk=True,
             parent=self,
@@ -3490,6 +4934,7 @@ class MainWindow(QMainWindow):
         self.stacking_status_label.setText("Memulai pemrosesan otomatis...")
         self.statusBar().showMessage(f"Menjalankan pemrosesan otomatis ({base_prof.value})...")
 
+        self._pipeline_start_time = time.perf_counter()
         worker.start()
 
         if wait_for_completion:
@@ -3544,9 +4989,59 @@ class MainWindow(QMainWindow):
             )
             self._is_showing_before = False
             self.toggle_before_after_button.setChecked(False)
-            self.preview_mode_combo.setCurrentIndex(0)
+            self.toggle_before_after_button.setText("Before / After")
             self._preview_mode = PreviewMode.FINAL_DISPLAY
+            self.preview_mode_combo.blockSignals(True)
+            self.preview_mode_combo.setCurrentIndex(0)
+            self.preview_mode_combo.blockSignals(False)
+
+            # Langsung perbarui tampilan citra di layar dengan hasil akhir (FINAL_DISPLAY)
+            final_prev = result_obj.previews.get(PreviewMode.FINAL_DISPLAY)
+            sci_target = (
+                result_obj.linear_result
+                if result_obj.linear_result is not None
+                else result_obj.stacked_data
+            )
+            if final_prev is not None and not final_prev.isNull():
+                self.viewer.set_image(final_prev, sci_target, preserve_view=True)
             self._update_displayed_preview()
+
+            # Simpan backup citra sebelum proses untuk fitur Before / After
+            orig_prev = result_obj.previews.get(PreviewMode.ORIGINAL)
+            if orig_prev is not None and not orig_prev.isNull():
+                self._original_unprocessed_qimage = orig_prev.copy()
+
+            if hasattr(self, "status_view_info"):
+                self.status_view_info.setText(f"Mode: Hasil Pemrosesan ({result_obj.profile.value})")
+
+            if self.histogram_window is not None and self.histogram_window.isVisible():
+                self.histogram_window.set_image_data(
+                    sci_target,
+                    f"{self._current_file_name or 'Citra'} (Hasil {result_obj.profile.value})",
+                )
+
+            elapsed_sec = getattr(result_obj, "total_elapsed_seconds", 0.0)
+            if hasattr(result_obj, "stage_records"):
+                for stage_rec in result_obj.stage_records:
+                    if stage_rec.status.value != "SKIPPED":
+                        s_sec = (stage_rec.duration_ms or 0.0) / 1000.0
+                        self.log_manager.info(
+                            "STAGE",
+                            f"{stage_rec.stage.value}",
+                            f"{stage_rec.summary} | Waktu: {s_sec:.2f}s",
+                        )
+            self.log_manager.success(
+                "PIPELINE",
+                "Pemrosesan Otomatis Selesai",
+                f"Profil: {result_obj.profile.value} | Total waktu: {elapsed_sec:.2f}s. Gunakan menu Save Result untuk menyimpan.",
+            )
+            export_rep = getattr(result_obj, "export_report", None)
+            if export_rep is not None and hasattr(export_rep, "generated_files"):
+                for out_f in export_rep.generated_files:
+                    self.log_manager.info("OUTPUT", f"File Tersimpan ({out_f.stage})", f"{out_f.path} | Waktu: 0.01s")
+
+            if hasattr(self, "image_action_toolbar"):
+                self._refresh_image_toolbar_state()
 
             self.state_manager.transition_to(ProcessingState.COMPLETED)
             self.statusBar().showMessage(f"Pemrosesan otomatis selesai ({result_obj.profile.value}).")
@@ -3558,7 +5053,7 @@ class MainWindow(QMainWindow):
         finally:
             self._set_input_controls_enabled(True)
             try:
-                self._refresh_processing_controls()
+                self._refresh_processing_controls(preserve_status_label=self._cancel_requested_by_ui)
             except Exception:
                 pass
 
@@ -3706,3 +5201,8 @@ class MainWindow(QMainWindow):
         self.stacking_status_label.setText(f"Hasil disimpan ke: {saved_path.name}")
         self.statusBar().showMessage(f"Hasil tersimpan: {saved_path}")
         return saved_path
+
+    def closeEvent(self, event: Any) -> None:  # noqa: N802
+        """Menyimpan preferensi tema dan direktori kerja terakhir sebelum jendela ditutup."""
+        self._save_user_preferences()
+        super().closeEvent(event)

@@ -382,3 +382,8 @@ class PipelineResult:
     source_file_names: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
+
+    @property
+    def total_elapsed_seconds(self) -> float:
+        """Total durasi eksekusi seluruh tahapan pipeline dalam detik."""
+        return sum(record.duration_ms for record in self.stage_records) / 1000.0

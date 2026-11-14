@@ -35,7 +35,10 @@ def test_window_basic_properties(window: MainWindow) -> None:
     assert APP_NAME in window.windowTitle()
     assert window.title_label.text() == "HILALONE"
     assert window.subtitle_label.text() == "Automated Hilal Image Processing" == APP_SUBTITLE
-    assert (window.width(), window.height()) == (1200, 800)
+    assert (window.width(), window.height()) == (1366, 768)
+    assert window.console_panel.isHidden()
+    ratio = window.info_panel.width() / float(window.width())
+    assert 0.29 <= ratio <= 0.34
 
 
 def test_initial_state_is_empty(window: MainWindow) -> None:

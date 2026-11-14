@@ -21,7 +21,7 @@ import math
 from typing import Tuple
 
 import numpy as np
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QCursor,
@@ -32,19 +32,36 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QResizeEvent,
+    QTransform,
     QWheelEvent,
 )
-from PySide6.QtWidgets import QLabel, QSizePolicy, QWidget
+from PySide6.QtWidgets import (
+    QGestureEvent,
+    QLabel,
+    QPinchGesture,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+from hilalone.gui.resources import get_logo_pixmap
 
 PLACEHOLDER_TEXT = 'Klik "Open Image" untuk membuka foto hilal'
+SECONDARY_PLACEHOLDER_TEXT = (
+    "Gunakan Multiple Images, Video, atau SER\n"
+    "untuk membuka kumpulan frame."
+)
 
 MIN_ZOOM_FACTOR = 0.05   # 5%
 MAX_ZOOM_FACTOR = 32.0   # 3200%
-ZOOM_STEP_RATIO = 1.25   # Faktor pengali setiap langkah zoom
+ZOOM_STEP_RATIO = 1.15   # Faktor pengali setiap langkah zoom (15% per step, mulus & presisi)
 
 
 class ImageViewer(QLabel):
     """Widget penampil gambar dengan kemampuan zoom, pan, loupe, dan seleksi ROI."""
+
+    # Signal saat citra dimuat atau dibersihkan
+    image_changed = Signal()
 
     # Signal yang dipancarkan saat rasio zoom berubah: (zoom_factor: float, is_fit_mode: bool)
     zoom_changed = Signal(float, bool)
@@ -55,6 +72,9 @@ class ImageViewer(QLabel):
     # Signal saat pengguna menyelesaikan seleksi ROI: (x: int, y: int, w: int, h: int)
     roi_selected = Signal(int, int, int, int)
 
+    # Signal saat mode tampilan Normal/Negative View berubah: (active: bool)
+    negative_view_changed = Signal(bool)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("imageViewer")
@@ -63,10 +83,15 @@ class ImageViewer(QLabel):
         self.setMinimumSize(200, 200)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Registrasi native pinch gesture untuk layar sentuh (touchscreen)
+        self.grabGesture(Qt.GestureType.PinchGesture)
 
-        # Sumber gambar visual dan data ilmiah asli
+        # Sumber gambar visual dan data ilmiah asli (serta buffer tampilan visual Normal/Negative)
         self._source_qimage: QImage | None = None
         self._source_pixmap: QPixmap | None = None
+        self._display_qimage: QImage | None = None
+        self._display_pixmap: QPixmap | None = None
+        self._negative_mode: bool = False
         self._scientific_data: np.ndarray | None = None
         self._raw_image_size: QSize = QSize(0, 0)
 
@@ -94,18 +119,208 @@ class ImageViewer(QLabel):
         self._cursor_widget_pos: QPoint | None = None
         self._cursor_image_pos: tuple[int, int] | None = None
 
+        # Status Night Vision (menyesuaikan overlay & aksen visual viewer)
+        self._is_night_vision: bool = False
+        self._cached_empty_logo_size: int = 0
+        self._cached_empty_logo_theme: bool | None = None
+
+        # Overlay Empty State bergaya Siril di tengah Image Viewer saat belum ada gambar
+        self._empty_layout = QVBoxLayout(self)
+        self._empty_layout.setContentsMargins(24, 24, 24, 24)
+        self._empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._empty_state_widget = QWidget(self)
+        self._empty_state_widget.setObjectName("viewerEmptyState")
+        self._empty_state_widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._empty_state_widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._empty_state_widget.setStyleSheet("background: transparent; border: none;")
+
+        empty_inner_layout = QVBoxLayout(self._empty_state_widget)
+        empty_inner_layout.setContentsMargins(0, 0, 0, 0)
+        empty_inner_layout.setSpacing(12)
+        empty_inner_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._empty_logo_label = QLabel(self._empty_state_widget)
+        self._empty_logo_label.setObjectName("viewerEmptyLogo")
+        self._empty_logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_logo_label.setStyleSheet("background: transparent; border: none;")
+
+        self._empty_primary_label = QLabel(PLACEHOLDER_TEXT, self._empty_state_widget)
+        self._empty_primary_label.setObjectName("viewerEmptyPrimaryText")
+        self._empty_primary_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_primary_label.setWordWrap(True)
+
+        self._empty_secondary_label = QLabel(SECONDARY_PLACEHOLDER_TEXT, self._empty_state_widget)
+        self._empty_secondary_label.setObjectName("viewerEmptySecondaryText")
+        self._empty_secondary_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_secondary_label.setWordWrap(True)
+
+        empty_inner_layout.addWidget(self._empty_logo_label, 0, Qt.AlignmentFlag.AlignCenter)
+        empty_inner_layout.addSpacing(6)
+        empty_inner_layout.addWidget(self._empty_primary_label, 0, Qt.AlignmentFlag.AlignCenter)
+        empty_inner_layout.addWidget(self._empty_secondary_label, 0, Qt.AlignmentFlag.AlignCenter)
+
+        self._empty_layout.addWidget(self._empty_state_widget, 0, Qt.AlignmentFlag.AlignCenter)
+
         self.clear_image()
 
+    def set_night_vision(self, active: bool) -> None:
+        """Mengatur status mode Night Vision untuk menyesuaikan aksen visual overlay viewer."""
+        if self._is_night_vision == active:
+            return
+        self._is_night_vision = active
+        self._update_empty_state_visuals(force=True)
+        self.update()
+
+    def _compute_empty_logo_size(self) -> int:
+        """Menghitung ukuran sisi logo Empty State secara proporsional terhadap ukuran viewport."""
+        w = max(self.width(), 1)
+        h = max(self.height(), 1)
+        # Target sekitar 220-260 px pada viewport lapang, lalu turun proporsional di layar 1366x768
+        preferred = int(min(w * 0.32, h * 0.50))
+        if w >= 520 and h >= 440:
+            preferred = max(220, min(260, preferred))
+        else:
+            preferred = min(220, preferred)
+        max_safe = max(64, min(w - 80, h - 140))
+        return max(64, min(preferred, max_safe))
+
+    def _update_empty_state_visuals(self, force: bool = False) -> None:
+        """Memperbarui logo, skala responsif, dan warna teks Empty State sesuai tema aktif."""
+        night_vision = self._is_night_vision
+        target_size = self._compute_empty_logo_size()
+
+        theme_changed = self._cached_empty_logo_theme != night_vision
+        size_changed = abs(target_size - self._cached_empty_logo_size) >= 2
+
+        if force or theme_changed or size_changed:
+            raw_pixmap = get_logo_pixmap(night_vision=night_vision)
+            if raw_pixmap.isNull():
+                self._empty_logo_label.setPixmap(QPixmap())
+                self._empty_logo_label.setText("HILALONE")
+                fallback_color = "#c84b4b" if night_vision else "#7dd3fc"
+                self._empty_logo_label.setStyleSheet(
+                    f"background: transparent; border: none; color: {fallback_color}; "
+                    "font-size: 22px; font-weight: 700; letter-spacing: 2px;"
+                )
+            else:
+                scaled_pixmap = raw_pixmap.scaled(
+                    target_size,
+                    target_size,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                self._empty_logo_label.setText("")
+                self._empty_logo_label.setStyleSheet("background: transparent; border: none;")
+                self._empty_logo_label.setPixmap(scaled_pixmap)
+            self._cached_empty_logo_size = target_size
+            self._cached_empty_logo_theme = night_vision
+
+        if night_vision:
+            primary_color = "#c84b4b"
+            secondary_color = "#8c3232"
+        else:
+            primary_color = "#7dd3fc"
+            secondary_color = "#7c93b0"
+
+        self._empty_primary_label.setStyleSheet(
+            f"background: transparent; border: none; color: {primary_color}; "
+            "font-size: 13px; font-weight: 600;"
+        )
+        self._empty_secondary_label.setStyleSheet(
+            f"background: transparent; border: none; color: {secondary_color}; "
+            "font-size: 12px; font-weight: 400;"
+        )
+
+        # Pastikan teks instruksi tidak terpotong oleh wordWrap yang menyempit
+        narrow_viewport = self.width() < 420
+        self._empty_primary_label.setWordWrap(narrow_viewport)
+        self._empty_secondary_label.setWordWrap(narrow_viewport)
+        if narrow_viewport:
+            wrap_width = max(220, self.width() - 64)
+            self._empty_primary_label.setMaximumWidth(wrap_width)
+            self._empty_secondary_label.setMaximumWidth(wrap_width)
+        else:
+            self._empty_primary_label.setMaximumWidth(16777215)
+            self._empty_secondary_label.setMaximumWidth(16777215)
+        self._empty_primary_label.adjustSize()
+        self._empty_secondary_label.adjustSize()
+        self._empty_state_widget.adjustSize()
+
     # ----------------------------------------------------------------- DATA BINDING
-    def set_image(self, image: QImage, scientific_data: np.ndarray | None = None) -> None:
+    def set_image(
+        self,
+        image: QImage,
+        scientific_data: np.ndarray | None = None,
+        *,
+        preserve_view: bool = False,
+    ) -> None:
         """Menampilkan gambar pratinjau baru dan mereferensikan scientific data jika ada."""
+        old_zoom = self._zoom_factor
+        old_pan = QPoint(self._pan_offset)
+        old_fit = self._is_fit_mode
+
         self._source_qimage = image.copy()
         self._source_pixmap = QPixmap.fromImage(image)
+        self._rebuild_display_buffer()
         self._scientific_data = scientific_data
         self._raw_image_size = image.size()
-        self._is_fit_mode = True
-        self._pan_offset = QPoint(0, 0)
+
+        if preserve_view:
+            self._zoom_factor = old_zoom
+            self._pan_offset = old_pan
+            self._is_fit_mode = old_fit
+        else:
+            self._is_fit_mode = True
+            self._pan_offset = QPoint(0, 0)
+
+        self._empty_state_widget.hide()
         self._refresh()
+        self.image_changed.emit()
+
+    def _rebuild_display_buffer(self) -> None:
+        """Menyusun buffer citra tampilan (Normal atau Negative) tanpa mengubah sumber ilmiah."""
+        if self._source_qimage is None or self._source_qimage.isNull():
+            self._display_qimage = None
+            self._display_pixmap = None
+            return
+
+        if not self._negative_mode:
+            self._display_qimage = self._source_qimage
+            if self._source_pixmap is None or self._source_pixmap.isNull():
+                self._source_pixmap = QPixmap.fromImage(self._source_qimage)
+            self._display_pixmap = self._source_pixmap
+            return
+
+        inv = self._source_qimage.copy()
+        if inv.format() == QImage.Format.Format_Indexed8:
+            inv = inv.convertToFormat(QImage.Format.Format_RGB888)
+        inv.invertPixels(QImage.InvertMode.InvertRgb)
+        self._display_qimage = inv
+        self._display_pixmap = QPixmap.fromImage(inv)
+
+    def is_negative_view(self) -> bool:
+        """True bila mode tampilan Negative View sedang aktif."""
+        return self._negative_mode
+
+    def set_negative_view(self, active: bool) -> None:
+        """Mengaktifkan atau menonaktifkan Negative View (hanya tampilan visual, non-destruktif)."""
+        target = bool(active)
+        if self._negative_mode == target:
+            return
+        self._negative_mode = target
+        self._rebuild_display_buffer()
+        self.negative_view_changed.emit(target)
+        if self.has_image():
+            self._refresh()
+        else:
+            self.update()
+
+    def toggle_negative_view(self) -> bool:
+        """Membalik mode tampilan antara Normal dan Negative View lalu mengembalikan status baru."""
+        new_state = not self._negative_mode
+        self.set_negative_view(new_state)
+        return new_state
 
     def set_scientific_data(self, scientific_data: np.ndarray | None) -> None:
         """Memperbarui referensi data ilmiah tanpa mengubah tampilan gambar pratinjau."""
@@ -113,8 +328,12 @@ class ImageViewer(QLabel):
 
     def clear_image(self) -> None:
         """Mengosongkan tampilan viewer dan mengembalikan state ke kondisi awal."""
+        was_negative = self._negative_mode
         self._source_qimage = None
         self._source_pixmap = None
+        self._display_qimage = None
+        self._display_pixmap = None
+        self._negative_mode = False
         self._scientific_data = None
         self._raw_image_size = QSize(0, 0)
         self._is_fit_mode = True
@@ -127,13 +346,26 @@ class ImageViewer(QLabel):
         self._cursor_widget_pos = None
         self._cursor_image_pos = None
         self.setPixmap(QPixmap())
-        self.setText(PLACEHOLDER_TEXT)
+        self.setText("")
+        self._update_empty_state_visuals()
+        self._empty_state_widget.show()
         self.setCursor(Qt.CursorShape.ArrowCursor)
+        if was_negative:
+            self.negative_view_changed.emit(False)
         self.zoom_changed.emit(1.0, True)
+        self.image_changed.emit()
 
     def has_image(self) -> bool:
         """True bila ada citra yang sedang dimuat pada viewer."""
         return self._source_pixmap is not None and not self._source_pixmap.isNull()
+
+    def source_qimage(self) -> QImage | None:
+        """Mengembalikan salinan QImage asli yang sedang ditampilkan."""
+        return self._source_qimage.copy() if self._source_qimage is not None else None
+
+    def scientific_data(self) -> np.ndarray | None:
+        """Mengembalikan array data ilmiah float32 yang sedang aktif."""
+        return self._scientific_data
 
     def raw_image_size(self) -> QSize:
         """Mengembalikan ukuran asli citra dalam piksel."""
@@ -153,16 +385,20 @@ class ImageViewer(QLabel):
 
     # ----------------------------------------------------------------- ZOOM & PAN
     def zoom_in(self, focus_point: QPoint | None = None) -> None:
-        """Memperbesar tampilan gambar (Zoom In) dengan faktor bertahap."""
+        """Memperbesar tampilan gambar (Zoom In) dengan faktor bertahap yang mulus."""
         if not self.has_image():
             return
+        if not isinstance(focus_point, QPoint):
+            focus_point = None
         target_zoom = min(MAX_ZOOM_FACTOR, self._zoom_factor * ZOOM_STEP_RATIO)
         self._apply_zoom(target_zoom, focus_point=focus_point)
 
     def zoom_out(self, focus_point: QPoint | None = None) -> None:
-        """Memperkecil tampilan gambar (Zoom Out) dengan faktor bertahap."""
+        """Memperkecil tampilan gambar (Zoom Out) dengan faktor bertahap yang mulus."""
         if not self.has_image():
             return
+        if not isinstance(focus_point, QPoint):
+            focus_point = None
         target_zoom = max(MIN_ZOOM_FACTOR, self._zoom_factor / ZOOM_STEP_RATIO)
         self._apply_zoom(target_zoom, focus_point=focus_point)
 
@@ -183,10 +419,64 @@ class ImageViewer(QLabel):
         self._pan_offset = QPoint(0, 0)
         self._refresh()
 
+    def rotate_cw(self) -> None:
+        """Memutar citra 90° searah jarum jam (Clockwise)."""
+        if not self.has_image() or self._source_qimage is None:
+            return
+        transform = QTransform().rotate(90)
+        self._source_qimage = self._source_qimage.transformed(transform, Qt.TransformationMode.FastTransformation)
+        self._source_pixmap = QPixmap.fromImage(self._source_qimage)
+        self._rebuild_display_buffer()
+        if self._scientific_data is not None:
+            self._scientific_data = np.ascontiguousarray(np.rot90(self._scientific_data, k=-1, axes=(0, 1)))
+        self._raw_image_size = self._source_qimage.size()
+        self._roi_rect_img = None
+        self._refresh()
+
+    def rotate_ccw(self) -> None:
+        """Memutar citra 90° berlawanan arah jarum jam (Counter-Clockwise)."""
+        if not self.has_image() or self._source_qimage is None:
+            return
+        transform = QTransform().rotate(-90)
+        self._source_qimage = self._source_qimage.transformed(transform, Qt.TransformationMode.FastTransformation)
+        self._source_pixmap = QPixmap.fromImage(self._source_qimage)
+        self._rebuild_display_buffer()
+        if self._scientific_data is not None:
+            self._scientific_data = np.ascontiguousarray(np.rot90(self._scientific_data, k=1, axes=(0, 1)))
+        self._raw_image_size = self._source_qimage.size()
+        self._roi_rect_img = None
+        self._refresh()
+
+    def flip_horizontal(self) -> None:
+        """Membalik citra secara horizontal (Mirror Kiri-Kanan)."""
+        if not self.has_image() or self._source_qimage is None:
+            return
+        self._source_qimage = self._source_qimage.transformed(QTransform().scale(-1, 1))
+        self._source_pixmap = QPixmap.fromImage(self._source_qimage)
+        self._rebuild_display_buffer()
+        if self._scientific_data is not None:
+            self._scientific_data = np.ascontiguousarray(np.flip(self._scientific_data, axis=1))
+        self._roi_rect_img = None
+        self._refresh()
+
+    def flip_vertical(self) -> None:
+        """Membalik citra secara vertikal (Mirror Atas-Bawah)."""
+        if not self.has_image() or self._source_qimage is None:
+            return
+        self._source_qimage = self._source_qimage.transformed(QTransform().scale(1, -1))
+        self._source_pixmap = QPixmap.fromImage(self._source_qimage)
+        self._rebuild_display_buffer()
+        if self._scientific_data is not None:
+            self._scientific_data = np.ascontiguousarray(np.flip(self._scientific_data, axis=0))
+        self._roi_rect_img = None
+        self._refresh()
+
     def _apply_zoom(self, new_zoom: float, focus_point: QPoint | None = None) -> None:
         """Menerapkan faktor zoom baru dengan mempertahankan titik fokus kursor."""
         if not self.has_image():
             return
+        if not isinstance(focus_point, QPoint):
+            focus_point = None
         old_zoom = self._zoom_factor
         if math.isclose(old_zoom, new_zoom, rel_tol=1e-4):
             return
@@ -307,8 +597,9 @@ class ImageViewer(QLabel):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, self._zoom_factor <= 1.0)
 
-        # Gambar konten citra sesuai skala
-        painter.drawPixmap(QRect(0, 0, rect.width(), rect.height()), self._source_pixmap)
+        # Gambar konten citra sesuai skala & mode tampilan aktif (Normal / Negative)
+        active_pixmap = self._display_pixmap if self._display_pixmap is not None else self._source_pixmap
+        painter.drawPixmap(QRect(0, 0, rect.width(), rect.height()), active_pixmap)
 
         # Gambar ROI jika ada
         if self._roi_rect_img is not None and self._raw_image_size.width() > 0:
@@ -328,6 +619,9 @@ class ImageViewer(QLabel):
     # ----------------------------------------------------------------- RENDERING
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
+        if self._source_pixmap is None:
+            self._update_empty_state_visuals()
+            return
         if self._is_fit_mode:
             self._refresh()
         else:
@@ -384,7 +678,8 @@ class ImageViewer(QLabel):
         # 1. Gambar citra pada area yang telah dihitung (smooth scaling jika perkecil, fast jika pixel-level zoom)
         smooth = self._zoom_factor <= 1.0
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, smooth)
-        painter.drawPixmap(self._scaled_rect, self._source_pixmap)
+        active_pixmap = self._display_pixmap if self._display_pixmap is not None else self._source_pixmap
+        painter.drawPixmap(self._scaled_rect, active_pixmap)
 
         # 2. Gambar overlay Wilayah Proteksi (Protected ROI) jika aktif
         if self._roi_rect_img is not None and self._raw_image_size.width() > 0:
@@ -428,7 +723,8 @@ class ImageViewer(QLabel):
         src_x0 = max(0, min(self._raw_image_size.width() - src_w, img_x - src_w // 2))
         src_y0 = max(0, min(self._raw_image_size.height() - src_h, img_y - src_h // 2))
 
-        crop_img = self._source_qimage.copy(src_x0, src_y0, src_w, src_h)
+        active_qimage = self._display_qimage if self._display_qimage is not None else self._source_qimage
+        crop_img = active_qimage.copy(src_x0, src_y0, src_w, src_h)
         scaled_crop = crop_img.scaled(
             loupe_dia,
             loupe_dia,
@@ -464,8 +760,9 @@ class ImageViewer(QLabel):
         # Gambar isi crop yang diperbesar
         painter.drawPixmap(loupe_rect.topLeft(), QPixmap.fromImage(scaled_crop))
 
-        # Gambar bingkai lingkaran/kotak elegan (#38bdf8)
-        border_pen = QPen(QColor(56, 189, 248, 255), 2.5)
+        # Gambar bingkai lingkaran/kotak elegan (merah pada Night Vision, cyan pada Standard Dark)
+        border_color = QColor(239, 68, 68, 255) if self._is_night_vision else QColor(56, 189, 248, 255)
+        border_pen = QPen(border_color, 2.5)
         painter.setPen(border_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRoundedRect(loupe_rect, 10, 10)
@@ -473,7 +770,8 @@ class ImageViewer(QLabel):
         # Gambar crosshair halus di tengah loupe
         center_x = lx + loupe_radius
         center_y = ly + loupe_radius
-        ch_pen = QPen(QColor(255, 255, 255, 200), 1.0)
+        ch_color = QColor(254, 202, 202, 220) if self._is_night_vision else QColor(255, 255, 255, 200)
+        ch_pen = QPen(ch_color, 1.0)
         painter.setPen(ch_pen)
         painter.drawLine(center_x - 8, center_y, center_x + 8, center_y)
         painter.drawLine(center_x, center_y - 8, center_x, center_y + 8)
@@ -484,10 +782,12 @@ class ImageViewer(QLabel):
 
         tag_rect = QRect(lx - 10, ly + loupe_dia + 4, loupe_dia + 20, 22)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(15, 23, 42, 230))
+        tag_bg = QColor(26, 8, 8, 230) if self._is_night_vision else QColor(15, 23, 42, 230)
+        painter.setBrush(tag_bg)
         painter.drawRoundedRect(tag_rect, 4, 4)
 
-        painter.setPen(QColor(226, 232, 240))
+        tag_text_color = QColor(254, 202, 202) if self._is_night_vision else QColor(226, 232, 240)
+        painter.setPen(tag_text_color)
         font = painter.font()
         font.setPointSize(8)
         font.setBold(True)
@@ -550,21 +850,46 @@ class ImageViewer(QLabel):
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
+    def event(self, event: QEvent) -> bool:
+        """Menangani gesture native layar sentuh (touchscreen pinch-to-zoom)."""
+        if event.type() == QEvent.Type.Gesture:
+            gesture_ev = event
+            if isinstance(gesture_ev, QGestureEvent):
+                pinch = gesture_ev.gesture(Qt.GestureType.PinchGesture)
+                if pinch is not None and self.has_image():
+                    scale = pinch.scaleFactor()
+                    if scale > 0.0 and not math.isclose(scale, 1.0, rel_tol=1e-3):
+                        # Redam laju perbesaran touch screen (damped scale) agar pergerakan halus & tidak terlalu cepat
+                        damped_scale = 1.0 + (scale - 1.0) * 0.4
+                        center = pinch.centerPoint().toPoint()
+                        target_zoom = max(MIN_ZOOM_FACTOR, min(MAX_ZOOM_FACTOR, self._zoom_factor * damped_scale))
+                        self._apply_zoom(target_zoom, focus_point=center)
+                    gesture_ev.accept()
+                    return True
+        return super().event(event)
+
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
-        """Zoom In / Zoom Out dengan mouse wheel yang berpusat pada posisi kursor."""
+        """Zoom In / Zoom Out dengan mouse wheel atau gesture touchpad/touchscreen yang berpusat pada posisi kursor."""
         if not self.has_image():
             super().wheelEvent(event)
             return
 
         delta = event.angleDelta().y()
         if delta == 0:
-            return
+            delta = event.pixelDelta().y()
+            if delta == 0:
+                return
 
         pos = event.position().toPoint()
-        if delta > 0:
-            self.zoom_in(focus_point=pos)
-        else:
-            self.zoom_out(focus_point=pos)
+        # Normalisasi delta: 120 units adalah satu notch roda mouse standar.
+        # Trackpad dan touchscreen mengirimkan delta kecil dan beruntun (misal 10-30 units).
+        num_steps = delta / 120.0
+        # Batasi rentang step agar tidak melonjak tiba-tiba pada flick/swipe cepat
+        num_steps = max(-2.0, min(2.0, num_steps))
+        # Skala perbesaran halus bertahap proporsional terhadap jarak fisik gesture:
+        zoom_mult = math.pow(ZOOM_STEP_RATIO, num_steps)
+        target_zoom = max(MIN_ZOOM_FACTOR, min(MAX_ZOOM_FACTOR, self._zoom_factor * zoom_mult))
+        self._apply_zoom(target_zoom, focus_point=pos)
         event.accept()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
@@ -574,7 +899,7 @@ class ImageViewer(QLabel):
 
         # 1. Mode Seleksi ROI
         if self.roi_selection_enabled and event.button() == Qt.MouseButton.LeftButton:
-            coords = self._screen_to_image_coords(event.pos())
+            coords = self._screen_to_image_coords(event.position().toPoint())
             if coords is not None:
                 self._is_roi_selecting = True
                 self._roi_drag_start = QPoint(coords[0], coords[1])
@@ -587,7 +912,7 @@ class ImageViewer(QLabel):
 
         if is_middle_click or is_left_pan:
             self._is_panning = True
-            self._pan_start_pos = event.pos()
+            self._pan_start_pos = event.position().toPoint()
             self._pan_start_offset = QPoint(self._pan_offset.x(), self._pan_offset.y())
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
@@ -600,7 +925,7 @@ class ImageViewer(QLabel):
             super().mouseMoveEvent(event)
             return
 
-        pos = event.pos()
+        pos = event.position().toPoint()
         coords = self._screen_to_image_coords(pos)
 
         # 1. Update Pan jika sedang mendrag

@@ -40,19 +40,21 @@ def scale_to_uint8_for_preview(data: np.ndarray) -> np.ndarray:
     if dtype == np.uint64:
         return np.ascontiguousarray((data >> 56).astype(np.uint8))
 
-    work = np.asarray(data, dtype=np.float64)
+    # Fast float32 processing to prevent heavy 64-bit memory allocation on large images
+    work = np.asarray(data, dtype=np.float32)
     finite_mask = np.isfinite(work)
     if not np.any(finite_mask):
         return np.zeros(data.shape, dtype=np.uint8)
 
-    vmin = float(np.min(work[finite_mask]))
-    vmax = float(np.max(work[finite_mask]))
+    valid_vals = work[finite_mask]
+    vmin = float(np.min(valid_vals))
+    vmax = float(np.max(valid_vals))
 
     if np.issubdtype(dtype, np.floating) and vmin >= 0.0 and vmax <= 1.0:
         scaled = np.clip(work * 255.0, 0.0, 255.0)
     elif vmax > vmin:
-        scaled = (work - vmin) / (vmax - vmin) * 255.0
-        scaled = np.clip(scaled, 0.0, 255.0)
+        inv_span = np.float32(255.0 / (vmax - vmin))
+        scaled = np.clip((work - vmin) * inv_span, 0.0, 255.0)
     else:
         scaled = np.zeros_like(work)
 

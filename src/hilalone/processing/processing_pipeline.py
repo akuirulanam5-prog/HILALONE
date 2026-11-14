@@ -84,6 +84,7 @@ class ProcessingPipelineOrchestrator:
         config: UnifiedProfileConfig | ProcessingProfile | str = ProcessingProfile.MEDIUM,
         *,
         master_flat: LoadedMasterFlat | None = None,
+        excluded_frame_indices: set[int] | None = None,
         allow_exclude_incompatible_and_error: bool = False,
         confirm_proceed_with_shift_risk: bool = False,
     ) -> None:
@@ -93,6 +94,7 @@ class ProcessingPipelineOrchestrator:
             self.config = config
 
         self.master_flat = master_flat
+        self.excluded_frame_indices = set(excluded_frame_indices) if excluded_frame_indices else None
         self.allow_exclude_incompatible_and_error = allow_exclude_incompatible_and_error
         self.confirm_proceed_with_shift_risk = confirm_proceed_with_shift_risk
         self.stage_records: list[StageExecutionRecord] = []
@@ -466,6 +468,7 @@ class ProcessingPipelineOrchestrator:
             sequence_manager,
             self.config.stacking_config.profile,
             master_flat=self.master_flat,
+            excluded_frame_indices=self.excluded_frame_indices,
             allow_exclude_incompatible_and_error=self.allow_exclude_incompatible_and_error,
             check_position_stability=False,
             confirm_proceed_with_shift_risk=True,

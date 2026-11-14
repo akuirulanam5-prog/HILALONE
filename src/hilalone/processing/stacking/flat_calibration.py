@@ -361,7 +361,7 @@ def load_master_flat_from_sequence(
     sort_by: str = "natural",
     endianness_policy: str = "siril_default",
     validate_flat_characteristics: bool = True,
-    max_working_memory_mb: int = 64,
+    max_working_memory_mb: int = 512,
 ) -> LoadedMasterFlat:
     """Membuat satu Master Flat (float32) dari sequence frame flat secara *lazy* & hemat RAM.
 
@@ -496,22 +496,40 @@ def load_master_flat_from_sequence(
             if f_arr.ndim == 3 and f_arr.shape[2] == 4:
                 f_arr = f_arr[..., :3]
 
-            f_f64 = np.asarray(f_arr, dtype=np.float64)
-            finite_mask = np.isfinite(f_f64)
-            pos_mask = finite_mask & (f_f64 > FLAT_ZERO_THRESHOLD)
+            f_f32 = np.asarray(f_arr, dtype=np.float32)
+            finite_mask = np.isfinite(f_f32)
+            pos_mask = finite_mask & (f_f32 > FLAT_ZERO_THRESHOLD)
 
-            total_px = max(1, f_f64.size)
-            valid_px_count = int(np.count_nonzero(pos_mask))
-            valid_ratio = float(valid_px_count) / float(total_px)
-
-            if valid_px_count > 0:
-                f_valid_vals = f_f64[pos_mask]
-                f_med = float(np.median(f_valid_vals))
-                f_mean = float(np.mean(f_valid_vals))
-                f_min = float(np.min(f_valid_vals))
-                f_max = float(np.max(f_valid_vals))
+            # Subsampling cepat jika frame berukuran besar untuk memeriksa validitas frame
+            f_h, f_w = f_f32.shape[:2]
+            if f_h * f_w > 10000:
+                sy = max(1, f_h // 100)
+                sx = max(1, f_w // 100)
+                sub_f = f_f32[::sy, ::sx]
+                sub_pos = np.isfinite(sub_f) & (sub_f > FLAT_ZERO_THRESHOLD)
+                total_px = max(1, sub_f.size)
+                valid_px_count = int(np.count_nonzero(sub_pos))
+                valid_ratio = float(valid_px_count) / float(total_px)
+                if valid_px_count > 0:
+                    f_valid_vals = sub_f[sub_pos]
+                    f_med = float(np.median(f_valid_vals))
+                    f_mean = float(np.mean(f_valid_vals))
+                    f_min = float(np.min(f_valid_vals))
+                    f_max = float(np.max(f_valid_vals))
+                else:
+                    f_med, f_mean, f_min, f_max = 0.0, 0.0, 0.0, 0.0
             else:
-                f_med, f_mean, f_min, f_max = 0.0, 0.0, 0.0, 0.0
+                total_px = max(1, f_f32.size)
+                valid_px_count = int(np.count_nonzero(pos_mask))
+                valid_ratio = float(valid_px_count) / float(total_px)
+                if valid_px_count > 0:
+                    f_valid_vals = f_f32[pos_mask]
+                    f_med = float(np.median(f_valid_vals))
+                    f_mean = float(np.mean(f_valid_vals))
+                    f_min = float(np.min(f_valid_vals))
+                    f_max = float(np.max(f_valid_vals))
+                else:
+                    f_med, f_mean, f_min, f_max = 0.0, 0.0, 0.0, 0.0
 
             # Sebuah frame flat dianggap valid bila memiliki pencahayaan positif (>10% piksel) dan median > 0
             is_frame_valid = (valid_ratio >= 0.10) and (f_med > FLAT_ZERO_THRESHOLD)
@@ -531,10 +549,10 @@ def load_master_flat_from_sequence(
             valid_frame_indices.append(f_idx)
 
             if can_store_all_in_memory:
-                valid_frames_data.append(np.asarray(f_arr, dtype=np.float32))
+                valid_frames_data.append(f_f32)
 
             # Akumulasi NaN-safe (hanya piksel finite & positif yang ditambahkan ke pembagi)
-            safe_frame_vals = np.where(pos_mask, f_f64, 0.0)
+            safe_frame_vals = np.where(pos_mask, f_f32, 0.0)
             sum_acc += safe_frame_vals
             valid_pixel_counts += pos_mask.astype(np.int32)
 
@@ -1097,11 +1115,10 @@ def apply_flat_calibration(
             f"Dimensi light frame ({scientific_frame_float32.shape}) tidak sesuai dengan "
             f"Master Flat ({normalized_flat.shape})."
         )
-    # Gunakan float64 saat pembagian untuk menjaga ketelitian numerik lalu kembalikan ke float32
-    calibrated = np.asarray(scientific_frame_float32, dtype=np.float64) / np.asarray(
-        normalized_flat, dtype=np.float64
-    )
-    return calibrated.astype(np.float32)
+    # Pembagian langsung float32 terakselerasi vektor AVX2 tanpa overhead alokasi float64
+    f_in = np.asarray(scientific_frame_float32, dtype=np.float32)
+    f_flat = np.asarray(normalized_flat, dtype=np.float32)
+    return (f_in / f_flat).astype(np.float32)
 
 
 def run_flat_calibration_on_sequence(

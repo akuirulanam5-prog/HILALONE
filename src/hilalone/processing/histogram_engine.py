@@ -61,13 +61,14 @@ def apply_mtf(x: np.ndarray, midtone_balance: float) -> np.ndarray:
       * Monoton naik murni untuk setiap m di (0, 1).
     """
     m = float(np.clip(midtone_balance, 1e-4, 1.0 - 1e-4))
-    arr = np.clip(np.asarray(x, dtype=np.float64), 0.0, 1.0)
+    arr = np.clip(np.asarray(x, dtype=np.float32), 0.0, 1.0)
     if abs(m - 0.5) <= 1e-6:
-        return arr.astype(np.float32)
+        return arr
 
-    num = (m - 1.0) * arr
-    den = (2.0 * m - 1.0) * arr - m
-    safe_den = np.where(np.abs(den) > 1e-12, den, -1e-12)
+    m_f = np.float32(m)
+    num = (m_f - np.float32(1.0)) * arr
+    den = (np.float32(2.0) * m_f - np.float32(1.0)) * arr - m_f
+    safe_den = np.where(np.abs(den) > 1e-7, den, np.float32(-1e-7))
     out = np.clip(num / safe_den, 0.0, 1.0)
     out = np.where(arr <= 0.0, 0.0, np.where(arr >= 1.0, 1.0, out))
     return out.astype(np.float32)
@@ -94,17 +95,15 @@ def solve_mtf_parameter_for_target_median(
 
 
 def apply_asinh_stretch(x: np.ndarray, a: float) -> np.ndarray:
-    """Menerapkan peregangan Asinh tervalidasi pada ``x`` di ``[0, 1]``.
-
-    Rumus:
-        S(x) = asinh(x / a) / asinh(1 / a),   a > 0
-    """
+    """Menerapkan peregangan Asinh tervalidasi pada ``x`` di ``[0, 1]`` dalam float32 cepat."""
     a_safe = float(max(1e-5, a))
-    arr = np.clip(np.asarray(x, dtype=np.float64), 0.0, 1.0)
+    arr = np.clip(np.asarray(x, dtype=np.float32), 0.0, 1.0)
     denom = float(np.arcsinh(1.0 / a_safe))
     if denom <= 1e-12:
-        return arr.astype(np.float32)
-    out = np.arcsinh(arr / a_safe) / denom
+        return arr
+    inv_denom = np.float32(1.0 / denom)
+    inv_a = np.float32(1.0 / a_safe)
+    out = np.arcsinh(arr * inv_a) * inv_denom
     return np.clip(out, 0.0, 1.0).astype(np.float32)
 
 
@@ -147,18 +146,22 @@ def _sample_valid_pixels_for_percentiles(
     image: np.ndarray,
     max_samples: int = 250_000,
 ) -> tuple[np.ndarray, int]:
-    """Mengambil sampel piksel finite secara deterministik (strided) untuk perhitungan persentil cepat."""
-    finite_mask = np.isfinite(image)
-    total_valid = int(np.count_nonzero(finite_mask))
-    if total_valid == 0:
+    """Mengambil sampel piksel finite secara deterministik (strided 2D) untuk perhitungan persentil cepat."""
+    h, w = image.shape[:2]
+    total_px = h * w
+    if total_px > max_samples:
+        stride_step = max(1, int(np.ceil(np.sqrt(float(total_px) / float(max_samples)))))
+        sub = image[::stride_step, ::stride_step]
+    else:
+        sub = image
+
+    finite_mask = np.isfinite(sub)
+    if not np.any(finite_mask):
         return np.empty(0, dtype=np.float64), 0
 
-    valid_1d = image[finite_mask]
-    if valid_1d.size <= max_samples:
-        return valid_1d.astype(np.float64, copy=False), total_valid
-
-    stride = max(1, int(valid_1d.size // max_samples))
-    return valid_1d[::stride].astype(np.float64, copy=False), total_valid
+    valid_1d = sub[finite_mask]
+    total_valid = int(np.count_nonzero(np.isfinite(image)))
+    return valid_1d.astype(np.float64, copy=False), total_valid
 
 
 def compute_robust_percentile_limits(

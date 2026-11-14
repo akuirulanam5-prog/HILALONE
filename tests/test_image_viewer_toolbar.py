@@ -16,7 +16,7 @@ from pathlib import Path
 import astropy.io.fits as fits
 import numpy as np
 import pytest
-from PySide6.QtCore import QPoint, QSize, Qt
+from PySide6.QtCore import QPoint, QPointF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QMouseEvent, QWheelEvent
 import tifffile
 
@@ -85,10 +85,12 @@ def test_image_viewer_pan_shifts_display_offset(qapp: object) -> None:
     initial_offset = QPoint(viewer._pan_offset.x(), viewer._pan_offset.y())
 
     # Simulasikan mouse drag untuk pan
-    start_point = QPoint(200, 150)
+    start_ptf = QPointF(200, 150)
     drag_event = QMouseEvent(
         QMouseEvent.Type.MouseButtonPress,
-        start_point,
+        start_ptf,
+        start_ptf,
+        start_ptf,
         Qt.MouseButton.LeftButton,
         Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,
@@ -96,9 +98,12 @@ def test_image_viewer_pan_shifts_display_offset(qapp: object) -> None:
     viewer.mousePressEvent(drag_event)
     assert viewer._is_panning is True
 
+    move_ptf = QPointF(160, 120)  # Geser sejauh dx=-40, dy=-30
     move_event = QMouseEvent(
         QMouseEvent.Type.MouseMove,
-        QPoint(160, 120),  # Geser sejauh dx=-40, dy=-30
+        move_ptf,
+        move_ptf,
+        move_ptf,
         Qt.MouseButton.LeftButton,
         Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,
@@ -108,7 +113,9 @@ def test_image_viewer_pan_shifts_display_offset(qapp: object) -> None:
 
     release_event = QMouseEvent(
         QMouseEvent.Type.MouseButtonRelease,
-        QPoint(160, 120),
+        move_ptf,
+        move_ptf,
+        move_ptf,
         Qt.MouseButton.LeftButton,
         Qt.MouseButton.NoButton,
         Qt.KeyboardModifier.NoModifier,
@@ -165,9 +172,12 @@ def test_image_viewer_hover_magnifier_loupe(qapp: object) -> None:
 
     # 8. Gerakkan kursor di atas gambar -> loupe mengikuti posisi kursor
     center_pos = QPoint(400, 300)
+    center_ptf = QPointF(400, 300)
     move_event = QMouseEvent(
         QMouseEvent.Type.MouseMove,
-        center_pos,
+        center_ptf,
+        center_ptf,
+        center_ptf,
         Qt.MouseButton.NoButton,
         Qt.MouseButton.NoButton,
         Qt.KeyboardModifier.NoModifier,
@@ -178,9 +188,12 @@ def test_image_viewer_hover_magnifier_loupe(qapp: object) -> None:
 
     # 9. Gerakkan kursor ke pojok kanan bawah -> koordinat loupe dijaga agar tidak terpotong
     corner_pos = QPoint(795, 595)
+    corner_ptf = QPointF(795, 595)
     corner_event = QMouseEvent(
         QMouseEvent.Type.MouseMove,
-        corner_pos,
+        corner_ptf,
+        corner_ptf,
+        corner_ptf,
         Qt.MouseButton.NoButton,
         Qt.MouseButton.NoButton,
         Qt.KeyboardModifier.NoModifier,
@@ -330,6 +343,11 @@ def test_image_action_toolbar_properties(qapp: object) -> None:
         win.zoom_in_button,
         win.fit_image_button,
         win.original_size_button,
+        win.rotate_ccw_button,
+        win.rotate_cw_button,
+        win.flip_horizontal_button,
+        win.flip_vertical_button,
+        win.negative_view_button,
         win.save_result_action_button,
         win.snapshot_button,
     ]
@@ -340,7 +358,7 @@ def test_image_action_toolbar_properties(qapp: object) -> None:
         # 25. Tooltip Bahasa Indonesia
         tip = btn.toolTip()
         assert len(tip) > 5, f"Tombol {btn} tidak memiliki tooltip informatif!"
-        assert any(word in tip.lower() for word in ["perbesar", "perkecil", "kaca pembesar", "sesuaikan", "asli", "simpan", "tangkapan"]), (
+        assert any(word in tip.lower() for word in ["perbesar", "perkecil", "kaca pembesar", "sesuaikan", "asli", "simpan", "tangkapan", "putar", "balik"]), (
             f"Tooltip '{tip}' tidak menggunakan Bahasa Indonesia!"
         )
 
@@ -362,3 +380,273 @@ def test_responsive_layout_on_small_and_large_windows(qapp: object) -> None:
     assert win.viewer.width() > 150
     assert win.image_action_toolbar.width() > 200
     assert not win.image_action_toolbar.isHidden()
+
+
+def test_image_viewer_rotate_and_flip(qapp: object) -> None:
+    """Menguji fungsionalitas rotasi (CW/CCW) dan pembalikan (flip horizontal/vertikal) pada ImageViewer."""
+    viewer = ImageViewer()
+    # Matriks sintetik: shape (30, 50) dengan nilai bergradasi
+    sci_data = np.arange(30 * 50, dtype=np.float32).reshape((30, 50))
+    qimg = QImage(50, 30, QImage.Format.Format_RGB32)
+    qimg.fill(QColor(100, 150, 200))
+    viewer.set_image(qimg, sci_data)
+
+    assert viewer.raw_image_size() == QSize(50, 30)
+    assert viewer.scientific_data().shape == (30, 50)
+
+    # 1. Rotasi CW 90° -> ukuran menjadi (30, 50) px -> W=30, H=50, shape (50, 30)
+    viewer.rotate_cw()
+    assert viewer.raw_image_size() == QSize(30, 50)
+    assert viewer.scientific_data().shape == (50, 30)
+
+    # 2. Rotasi CCW 90° -> kembali ke W=50, H=30
+    viewer.rotate_ccw()
+    assert viewer.raw_image_size() == QSize(50, 30)
+    assert viewer.scientific_data().shape == (30, 50)
+    np.testing.assert_allclose(viewer.scientific_data(), sci_data)
+
+    # 3. Flip Horizontal
+    viewer.flip_horizontal()
+    assert viewer.raw_image_size() == QSize(50, 30)
+    np.testing.assert_allclose(viewer.scientific_data(), np.fliplr(sci_data))
+
+    # Kembalikan lagi
+    viewer.flip_horizontal()
+    np.testing.assert_allclose(viewer.scientific_data(), sci_data)
+
+    # 4. Flip Vertical
+    viewer.flip_vertical()
+    assert viewer.raw_image_size() == QSize(50, 30)
+    np.testing.assert_allclose(viewer.scientific_data(), np.flipud(sci_data))
+
+
+def test_main_window_rotate_and_flip_toolbar_integration(qapp: object, tmp_path: Path) -> None:
+    """Menguji integrasi tombol rotasi dan flip pada MainWindow toolbar."""
+    win = MainWindow()
+
+    # Saat belum ada gambar, tombol rotasi & flip harus disabled
+    assert not win.rotate_ccw_button.isEnabled()
+    assert not win.rotate_cw_button.isEnabled()
+    assert not win.flip_horizontal_button.isEnabled()
+    assert not win.flip_vertical_button.isEnabled()
+
+    # Muat gambar sintetik
+    img_path = tmp_path / "test_rot.tif"
+    synth_arr = (np.ones((40, 60)) * 500).astype(np.uint16)
+    tifffile.imwrite(str(img_path), synth_arr)
+    assert win.load_path(str(img_path)) is True
+
+    # Tombol harus aktif
+    assert win.rotate_ccw_button.isEnabled()
+    assert win.rotate_cw_button.isEnabled()
+    assert win.flip_horizontal_button.isEnabled()
+    assert win.flip_vertical_button.isEnabled()
+
+    # Klik rotate CW
+    win.rotate_cw_button.click()
+    assert win.viewer.raw_image_size() == QSize(40, 60)
+
+    # Klik flip horizontal
+    win.flip_horizontal_button.click()
+    assert win.viewer.has_image()
+
+    # Tutup gambar -> tombol harus kembali disabled
+    win.close_image()
+    assert not win.rotate_cw_button.isEnabled()
+    assert not win.flip_horizontal_button.isEnabled()
+
+
+def test_preview_modes_and_before_after_preserves_rotation_and_flip(qapp: object, tmp_path: Path) -> None:
+    """Menguji bahwa beralih pratinjau (Before/After & mode pratinjau) tetap mempertahankan rotasi dan flip."""
+    from hilalone.gui.main_window import PreviewMode
+    win = MainWindow()
+
+    # Buat citra asimetris W=60, H=40 (sehingga rotasi 90° menghasilkan W=40, H=60 yang jelas)
+    img_path = tmp_path / "asym_test.tif"
+    synth_arr = np.linspace(100, 2000, 40 * 60, dtype=np.float32).reshape((40, 60))
+    tifffile.imwrite(str(img_path), synth_arr)
+    assert win.load_path(str(img_path)) is True
+
+    assert win.viewer.raw_image_size() == QSize(60, 40)
+
+    # 1. Terapkan penyesuaian kurva
+    win.open_curves_window()
+    assert win.curves_window is not None
+    win.curves_window._preset_scurve()
+    win.curves_window.btn_apply.click()
+    win.curves_window.close()
+
+    # 2. Putar 90° CW dan Flip Horizontal
+    win.rotate_cw_button.click()
+    assert win.viewer.raw_image_size() == QSize(40, 60)
+    win.flip_horizontal_button.click()
+    assert win.viewer.raw_image_size() == QSize(40, 60)
+
+    # 3. Klik tombol Before / After (beralih ke BEFORE)
+    win.toggle_before_after_button.click()
+    assert win._is_showing_before is True
+    # Viewer harus TETAP mempertahankan orientasi terputar W=40, H=60
+    assert win.viewer.raw_image_size() == QSize(40, 60)
+
+    # 4. Klik tombol Before / After lagi (beralih kembali ke AFTER)
+    win.toggle_before_after_button.click()
+    assert win._is_showing_before is False
+    assert win.viewer.raw_image_size() == QSize(40, 60)
+
+    # 5. Ubah dropdown mode pratinjau ke Background Corrected
+    for i in range(win.preview_mode_combo.count()):
+        if win.preview_mode_combo.itemData(i) == PreviewMode.BACKGROUND_CORRECTED.value:
+            win.preview_mode_combo.setCurrentIndex(i)
+            break
+    # Viewer harus TETAP mempertahankan orientasi terputar W=40, H=60
+    assert win.viewer.raw_image_size() == QSize(40, 60)
+
+    # 6. Putar lagi 90° CW saat sedang dalam mode Background Corrected
+    win.rotate_cw_button.click()
+    # Sekarang menjadi 180° rotasi: W=60, H=40
+    assert win.viewer.raw_image_size() == QSize(60, 40)
+
+    # 7. Beralih ke Before lagi: harus mempertahankan rotasi baru (W=60, H=40)
+    win.toggle_before_after_button.click()
+    assert win.viewer.raw_image_size() == QSize(60, 40)
+    win.close()
+
+
+def test_toolbar_zoom_in_zoom_out_buttons_and_smoothness(qapp: object) -> None:
+    """Memastikan tombol zoom in dan zoom out pada toolbar berfungsi saat diklik dan halus."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QWheelEvent
+
+    win = MainWindow()
+    win.show()
+
+    img = QImage(200, 150, QImage.Format.Format_RGB32)
+    img.fill(QColor(100, 150, 200))
+    win.viewer.set_image(img)
+    qapp.processEvents()
+
+    assert win.viewer.has_image()
+    initial_zoom = win.viewer.zoom_factor()
+
+    # 1. Klik tombol zoom-in pada toolbar (memastikan tidak crash oleh bool argument dari signal clicked)
+    win.zoom_in_button.click()
+    qapp.processEvents()
+    zoomed_in = win.viewer.zoom_factor()
+    assert zoomed_in > initial_zoom
+    assert not win.viewer.is_fit_mode()
+
+    # 2. Klik tombol zoom-out pada toolbar
+    win.zoom_out_button.click()
+    qapp.processEvents()
+    zoomed_out = win.viewer.zoom_factor()
+    assert zoomed_out < zoomed_in
+
+    # 3. Uji wheelEvent dengan delta kecil (layar sentuh / touch screen pinch)
+    wheel_ev = QWheelEvent(
+        QPointF(100, 100),
+        QPointF(100, 100),
+        QPoint(0, 0),
+        QPoint(0, 24),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.ScrollUpdate,
+        False,
+    )
+    pre_wheel = win.viewer.zoom_factor()
+    win.viewer.wheelEvent(wheel_ev)
+    post_wheel = win.viewer.zoom_factor()
+    assert post_wheel > pre_wheel
+    # Pastikan kenaikan tidak terlalu cepat (harus di bawah 1.10x per touch step)
+    assert post_wheel / pre_wheel < 1.10
+
+    win.close()
+
+
+def test_normal_and_negative_view_switch_and_theming(qapp: object, tmp_path: Path) -> None:
+    """Menguji fitur Switch Normal & Negative View, posisi ikon, warna Dark/Night, dan keamanan data ilmiah."""
+    from PIL import Image
+    from PySide6.QtGui import QColor, QIcon
+    from hilalone.gui.icons import create_themed_vector_icon
+
+    # 1. Pastikan ikon vektor negative-view berbeda warnanya pada Standard Dark vs Night Vision Red
+    icon_dark = create_themed_vector_icon("negative-view", night_vision=False, size=20)
+    icon_night = create_themed_vector_icon("negative-view", night_vision=True, size=20)
+    assert not icon_dark.isNull() and not icon_night.isNull()
+    img_dark = icon_dark.pixmap(20, 20, QIcon.Mode.Normal, QIcon.State.Off).toImage()
+    img_night = icon_night.pixmap(20, 20, QIcon.Mode.Normal, QIcon.State.Off).toImage()
+    assert img_dark != img_night
+    # Piksel terisi (setengah kiri lingkaran) di mode Night Vision harus bernuansa merah (R > B)
+    c_night = img_night.pixelColor(7, 10)
+    c_dark = img_dark.pixelColor(7, 10)
+    assert c_night.alpha() > 0 and c_night.red() > c_night.blue() + 50
+    assert c_dark.alpha() > 0 and c_dark.blue() >= c_dark.red()
+
+    win = MainWindow()
+    try:
+        win.show()
+        qapp.processEvents()
+
+        # 2. Posisi tombol tepat di sebelah kanan tombol Balik Vertikal
+        tb_layout = win.image_action_toolbar.layout()
+        idx_flip_v = tb_layout.indexOf(win.flip_vertical_button)
+        idx_neg = tb_layout.indexOf(win.negative_view_button)
+        assert idx_flip_v >= 0
+        assert idx_neg == idx_flip_v + 1
+        assert not win.negative_view_button.isEnabled()
+
+        # 3. Muat citra sintetik dengan nilai ilmiah diketahui (tidak boleh berubah saat Negative View)
+        arr_u8 = np.full((32, 48, 3), [30, 80, 210], dtype=np.uint8)
+        sample_path = tmp_path / "neg_test.png"
+        Image.fromarray(arr_u8).save(sample_path)
+        win.load_path(sample_path)
+        qapp.processEvents()
+
+        assert win.viewer.has_image()
+        assert win.negative_view_button.isEnabled()
+        assert not win.negative_view_button.isChecked()
+        assert not win.viewer.is_negative_view()
+
+        sci_before = win.viewer.scientific_data().copy()
+        src_before = win.viewer.source_qimage().copy()
+
+        # 4. Aktifkan Negative View lewat tombol toolbar
+        win.negative_view_button.click()
+        qapp.processEvents()
+        assert win.negative_view_button.isChecked()
+        assert win.viewer.is_negative_view()
+
+        # Data ilmiah & source_qimage normal tidak boleh berubah!
+        np.testing.assert_allclose(win.viewer.scientific_data(), sci_before)
+        assert win.viewer.source_qimage() == src_before
+
+        # Buffer tampilan visual & hasil render_view_pixmap harus terbalik (255 - [30, 80, 210] = [225, 175, 45])
+        disp_px = win.viewer._display_qimage.pixelColor(10, 10)
+        assert (disp_px.red(), disp_px.green(), disp_px.blue()) == (225, 175, 45)
+        snap_neg = win.viewer.render_view_pixmap().toImage()
+        snap_px = snap_neg.pixelColor(snap_neg.width() // 2, snap_neg.height() // 2)
+        assert snap_px.red() > 200 and snap_px.blue() < 60
+
+        # 5. Toggle Night Vision memperbarui warna ikon tombol negative_view_button tanpa mematikan mode
+        win.toggle_night_vision_theme(True)
+        qapp.processEvents()
+        assert win.viewer.is_negative_view()
+        btn_night_px = win.negative_view_button.icon().pixmap(20, 20, QIcon.Mode.Normal, QIcon.State.Off).toImage().pixelColor(7, 10)
+        assert btn_night_px.red() > btn_night_px.blue() + 50
+
+        # 6. Matikan kembali Negative View -> kembali ke Normal
+        win.negative_view_button.click()
+        qapp.processEvents()
+        assert not win.viewer.is_negative_view()
+        disp_norm = win.viewer._display_qimage.pixelColor(10, 10)
+        assert (disp_norm.red(), disp_norm.green(), disp_norm.blue()) == (30, 80, 210)
+
+        # 7. Close image me-reset ke Normal & disable tombol
+        win.negative_view_button.click()
+        assert win.viewer.is_negative_view()
+        win.close_image()
+        qapp.processEvents()
+        assert not win.viewer.is_negative_view()
+        assert not win.negative_view_button.isChecked()
+        assert not win.negative_view_button.isEnabled()
+    finally:
+        win.close()

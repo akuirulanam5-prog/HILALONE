@@ -337,6 +337,14 @@ def test_gui_fits_structured_metadata_and_collapsible_full_header(
         win.fits_full_header_toggle.setChecked(True)
         qapp.processEvents()
         assert win.fits_full_header_container.isHidden() is False
+        # Verifikasi bebas pengulangan: raw_label tidak dimasukkan ke dalam layout visual
+        assert win.fits_full_header_raw_label.isVisible() is False
+        container_widgets = [
+            win.fits_full_header_container.layout().itemAt(i).widget()
+            for i in range(win.fits_full_header_container.layout().count())
+        ]
+        assert win.fits_full_header_raw_label not in container_widgets
+
         full_hdr_text = win._info_values["fits_full_header"].text()
         assert "CUSTOMKW" in full_hdr_text
         assert "HILAL_2026_OK" in full_hdr_text
@@ -344,6 +352,27 @@ def test_gui_fits_structured_metadata_and_collapsible_full_header(
         assert long_date_obs in full_hdr_text
         # Nilai EXPTIME asli berpresisi penuh tetap utuh di Header FITS Lengkap!
         assert "0.09178114256022202" in full_hdr_text
+
+        # Verifikasi format EXPTIME di tampilan grid Header FITS Lengkap diformat ke '0.00 s'
+        exptime_grid_val = None
+        for i in range(0, len(win._full_fits_card_widgets), 2):
+            if win._full_fits_card_widgets[i].text() == "EXPTIME":
+                exptime_grid_val = win._full_fits_card_widgets[i + 1].text()
+                break
+        assert exptime_grid_val is not None
+        assert exptime_grid_val.startswith("0.09 s")
+
+        # Verifikasi format EXPTIME di Image Information & Metadata Editor juga '0.00 s'
+        win.open_image_information_dialog()
+        qapp.processEvents()
+        assert win.info_dialog is not None
+        dialog_exptime_val = None
+        for r in range(win.info_dialog.table.rowCount()):
+            if win.info_dialog.table.item(r, 0).text() == "EXPTIME":
+                dialog_exptime_val = win.info_dialog.table.item(r, 1).text()
+                break
+        assert dialog_exptime_val == "0.09 s"
+        win.info_dialog.close()
 
         # 3. Uji Multiple Images FITS (perpindahan dari header lengkap ke header minimal)
         assert win.load_sequence_paths([p_full, p_min]) is True

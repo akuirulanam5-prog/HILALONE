@@ -50,6 +50,7 @@ class PipelineWorker(QThread):
         *,
         config: UnifiedProfileConfig | ProcessingProfile | str = ProcessingProfile.MEDIUM,
         master_flat: LoadedMasterFlat | None = None,
+        excluded_frame_indices: set[int] | None = None,
         allow_exclude_incompatible_and_error: bool = False,
         confirm_proceed_with_shift_risk: bool = True,
         parent: QObject | None = None,
@@ -60,6 +61,7 @@ class PipelineWorker(QThread):
         self.single_image_info = single_image_info
         self.config = config
         self.master_flat = master_flat
+        self.excluded_frame_indices = set(excluded_frame_indices) if excluded_frame_indices else None
         self.allow_exclude_incompatible_and_error = allow_exclude_incompatible_and_error
         self.confirm_proceed_with_shift_risk = confirm_proceed_with_shift_risk
         self._is_cancelled = False
@@ -75,6 +77,7 @@ class PipelineWorker(QThread):
         orchestrator = ProcessingPipelineOrchestrator(
             self.config,
             master_flat=self.master_flat,
+            excluded_frame_indices=self.excluded_frame_indices,
             allow_exclude_incompatible_and_error=self.allow_exclude_incompatible_and_error,
             confirm_proceed_with_shift_risk=self.confirm_proceed_with_shift_risk,
         )
