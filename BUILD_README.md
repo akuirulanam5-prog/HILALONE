@@ -10,7 +10,8 @@ Dokumen ini menjelaskan cara membangun, menguji, membersihkan, dan mendistribusi
 - `requirements-build.txt` — Daftar dependensi runtime + toolchain PyInstaller pada `.venv`.
 - `build_windows.bat` — Skrip otomatis build `ONE-DIR` ke `dist\HILALONE\` beserta validasi pra-build dan log (`build\pyinstaller_build.log`).
 - `clean_build.bat` — Menghapus artefak build (`build\` dan `dist\HILALONE`) tanpa menyentuh source code, aset, tes, `.venv`, atau data pengguna.
-- `HILALONE.iss` — Skrip Inno Setup 6 untuk membuat installer `release\HILALONE_Setup.exe` setelah distribusi `ONE-DIR` lulus pengujian.
+- `HILALONE.iss` — Skrip Inno Setup 7 untuk membuat installer `release\HILALONE_Setup.exe` setelah distribusi `ONE-DIR` lulus pengujian.
+- `build_installer.bat` — Skrip otomatis kompilasi installer Windows via Inno Setup 7 (`ISCC.exe`).
 
 ## 2. Langkah Build Windows Executable (ONE-DIR)
 1. Pastikan virtual environment `.venv` tersedia dan dependensi build sudah terpasang (`requirements-build.txt`).
@@ -37,8 +38,12 @@ Dokumen ini menjelaskan cara membangun, menguji, membersihkan, dan mendistribusi
 3. Pastikan logo Standard Dark / Night Vision Red tampil, format input/ekspor bekerja, dan tidak ada error DLL yang hilang.
 
 ## 5. Pembuatan Windows Installer (Setelah Build ONE-DIR Lulus Uji)
-Setelah Inno Setup 6 terpasang:
+Setelah Inno Setup 7 (`7.x`) terpasang (mis. di `%LOCALAPPDATA%\Programs\Inno Setup 7\`):
 ```bat
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" HILALONE.iss
+build_installer.bat
+```
+atau panggil compiler secara langsung:
+```bat
+"%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe" HILALONE.iss
 ```
 Hasil installer akan dibuat di `release\HILALONE_Setup.exe`. Instalasi default bersifat *per-user* (`%LOCALAPPDATA%\Programs\HILALONE`) sehingga tidak membutuhkan hak Administrator dan tidak menghapus konfigurasi/log pengguna saat uninstall.

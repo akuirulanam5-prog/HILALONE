@@ -43,8 +43,9 @@ HILALONE/
 │  └─ main.py             # Entry point aplikasi desktop
 ├─ tests/                 # Pengujian unit & UI (pytest) menggunakan data sintetis
 ├─ HILALONE.spec          # Konfigurasi build Windows executable (PyInstaller ONE-DIR)
-├─ HILALONE.iss           # Skrip Windows Installer (Inno Setup 6)
+├─ HILALONE.iss           # Skrip Windows Installer (Inno Setup 7)
 ├─ build_windows.bat      # Otomasi build Windows executable ke dist\HILALONE\
+├─ build_installer.bat    # Otomasi kompilasi Windows installer ke release\HILALONE_Setup.exe
 ├─ clean_build.bat        # Pembersih artefak build sementara
 ├─ BUILD_README.md        # Panduan rinci build & distribusi Windows
 ├─ AGENTS.md              # Aturan arsitektur & batasan ilmiah proyek
@@ -97,7 +98,15 @@ Pastikan dependensi build terpasang di `.venv` (`requirements-build.txt`), lalu 
 build_windows.bat
 ```
 
-Hasil build `ONE-DIR` tersedia di `dist\HILALONE\HILALONE.exe` (serta peluncur `HILALONE_Diagnostic.bat` untuk mode diagnostik/console). Dokumentasi lengkap proses build, uji distribusi bersih, dan pembuatan installer Inno Setup (`HILALONE.iss`) dapat dibaca di [BUILD_README.md](BUILD_README.md).
+Hasil build `ONE-DIR` tersedia di `dist\HILALONE\HILALONE.exe` (serta peluncur `HILALONE_Diagnostic.bat` untuk mode diagnostik/console).
+
+Untuk membuat Windows Installer (`release\HILALONE_Setup.exe`) menggunakan **Inno Setup 7** setelah `dist\HILALONE` siap:
+
+```bat
+build_installer.bat
+```
+
+Dokumentasi lengkap proses build, uji distribusi bersih, dan pembuatan installer Inno Setup 7 ([HILALONE.iss](HILALONE.iss)) dapat dibaca di [BUILD_README.md](BUILD_README.md).
 
 ---
 

@@ -1,10 +1,10 @@
 ; ============================================================================
-; HILALONE v1.0.0 — Skrip Windows Installer (Inno Setup 6)
+; HILALONE v1.0.0 — Skrip Windows Installer (Inno Setup 7)
 ; Target output: release\HILALONE_Setup.exe
 ;
 ; Catatan:
 ; - Jalankan build ONE-DIR (`build_windows.bat`) dan uji `dist\HILALONE\HILALONE.exe`
-;   terlebih dahulu sebelum mengompilasi skrip ini dengan Inno Setup 6 (ISCC.exe).
+;   terlebih dahulu sebelum mengompilasi skrip ini dengan Inno Setup 7 (ISCC.exe).
 ; - Mendukung instalasi per-user (`PrivilegesRequired=lowest`) tanpa hak Administrator.
 ; - Data pengguna (%LOCALAPPDATA%\HILALONE) TIDAK dihapus otomatis saat uninstall.
 ; ============================================================================
