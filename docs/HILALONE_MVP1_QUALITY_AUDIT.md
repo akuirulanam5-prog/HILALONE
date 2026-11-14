@@ -1,11 +1,12 @@
 # LAPORAN AUDIT KUALITAS PERANGKAT LUNAK, UI/UX & VALIDASI ILMIAH
 # PROYEK HILALONE — FINALISASI DAN PENINGKATAN KUALITAS MVP 1.0
 
-**Dokumen**: `docs/HILALONE_MVP1_QUALITY_AUDIT.md`  
-**Aplikasi**: HILALONE (Automated Astronomical & Crescent Moon Image Processing)  
-**Lingkungan**: Python 3.10.11 (64-bit), PySide6 6.8+, NumPy, Astropy, SciPy, rawpy, PyAV, tifffile  
-**Prinsip Utama**: *"Enhance the Signal, Never Invent the Signal"*  
-**Tanggal Audit**: 12 November 2026  
+**Dokumen**: `docs/HILALONE_MVP1_QUALITY_AUDIT.md`
+**Aplikasi**: HILALONE (Automated Astronomical & Crescent Moon Image Processing)
+**Lingkungan**: Python 3.10.11 (64-bit), PySide6 6.12.0 *(tercatat 6.8+ pada audit awal)*, NumPy 2.2.6, Astropy 6.1.7, SciPy 1.15.3, scikit-image 0.25.2, rawpy 0.27.1, PyAV 17.1.0, tifffile 2025.5.10, Pillow 12.3.0
+**Prinsip Utama**: *"Enhance the Signal, Never Invent the Signal"*
+**Tanggal Audit**: 12 November 2026
+**Tanggal Review Status**: 14 November 2026 *(lihat Bagian 5 untuk hasil verifikasi pasca-audit)*
 
 ---
 
@@ -45,6 +46,8 @@ Berdasarkan audit menyeluruh terhadap 10 aspek kualitas, ditemukan sejumlah poin
 | **ISSUE-07** | Design System | `styles.py` | Nilai warna dan token desain tertanam langsung (*hardcoded strings*) dalam blok QSS besar tanpa struktur dataclass token terpusat. | **P2 (Medium)** |
 | **ISSUE-08** | Terminologi Ilmiah | `top_panels.py` & `main_window.py` | Sebagian label numerik dan waktu belum menyertakan satuan metrik eksplisit (misal `s`, `ms`, `fps`, `ADU`). | **P2 (Medium)** |
 | **ISSUE-09** | Polishing Visual | Dialog & Header | Detail spasi mikro (padding/margin) pada header tombol dialog sekunder agar selaras sempurna dengan 4px/8px grid system. | **P3 (Low)** |
+
+> **Catatan Review 14 November 2026:** Tabel dan uraian pada Bagian 2–4 di bawah dipertahankan sesuai catatan audit awal (12 November 2026). Untuk status implementasi kode, cakupan unit test, bukti baseline runtime (`225 passed, 3 skipped`), serta rincian `ISSUE-09`, lihat **Bagian 5**.
 
 ---
 
@@ -204,3 +207,48 @@ Sesuai urutan prioritas pada Bagian XIV:
    - Eksekusi benchmark performa riil (waktu median, alokasi RAM).
    - Eksekusi regresi penuh seluruh test suite (215+ tests).
    - Penyusunan Laporan Akhir Penerimaan Kualitas.
+
+> **Catatan Review 14 November 2026:** Status progres aktual untuk `PHASE 1`–`6` dan `ISSUE-01`–`09` didokumentasikan pada **Bagian 5** tanpa menghapus kronologi jadwal di atas.
+
+---
+
+## 5. Pembaruan Status Verifikasi Pasca-Audit (Review 14 November 2026)
+
+Pembaruan ini menambahkan bukti kode, cakupan unit test, dan hasil eksekusi runtime aktual pada repositori `HILALONE v1.0.0` (branch `docs/sync-v1.0.0-documentation`) sambil mempertahankan seluruh catatan temuan awal tanggal 12 November 2026. Tidak ada temuan yang ditandai **`DONE FULL`** apabila masih terdapat celah pengujian, perbaikan parsial, atau metrik performa/validasi nyata yang belum diukur.
+
+### 5.1 Hasil Pengujian Runtime Baseline Test Suite (`.venv`)
+
+- **Lingkungan Pengujian:** Python `3.10.11` (64-bit), `.venv` dengan `requirements.txt` terpasang *(seluruh runtime lock tercatat di [requirements-runtime.txt](../requirements-runtime.txt), termasuk `pillow==12.3.0` sebagai runtime dependency)*, `PySide6 6.12.0`, git working tree bersih sebelum pembuatan branch `docs/sync-v1.0.0-documentation`.
+- **Perintah & Hasil Aktual (Mesin Kontributor):**
+  - Mode `QT_QPA_PLATFORM="offscreen"`, `.\.venv\Scripts\python.exe -m pytest -q`:
+    **`225 passed, 3 skipped` (`228 test cases`) dalam `61.62 seconds` pada pengujian pertama**.
+  - Konfirmasi ulang dengan `pytest -rs -q`: **`225 passed, 3 skipped` dalam `51.63 seconds`**, tanpa output *warnings summary* *(observasi baseline ini tidak diklaim sebagai nol `DeprecationWarning` secara mutlak karena validasi eksplisit `-W default::DeprecationWarning` / `-W error::DeprecationWarning` belum dijalankan)*.
+- **Penjelasan 3 Test yang Dilewati (*Skipped* — Bukan Kegagalan):**
+  Ketiga test yang berstatus *skipped* adalah test opsional untuk sampel observasi eksternal yang memang tidak disertakan dalam repositori:
+  1. `tests/test_flat_calibration.py:755` (`test_flat_calibration_real_pal8_avi_files`): *"Berkas sampel nyata tidak ditemukan di sistem lokal."* (membutuhkan `C:\Astrofotografer\Stacking beta\bahan pak ahmad junaidi\flat.avi` & `moon.avi`).
+  2. `tests/test_raw_reader.py:695` (`test_real_camera_raw_file_if_present`): *"Folder C:\Astrofotografer tidak ditemukan."* (membutuhkan berkas Camera RAW nyata lokal).
+  3. `tests/test_tiff_reader.py:207` (`test_real_tes_tif_if_present`): *"Berkas tes.tif tidak tersedia di mesin ini."* (membutuhkan `C:\Astrofotografer\tes.tif`).
+- **Pemisahan Baseline Test Suite vs Benchmark Performa Khusus (`ISSUE-03`):**
+  - Hasil `225 passed, 3 skipped` membuktikan **baseline fungsional test suite (`offscreen`)** pada 18 berkas test (202 fungsi `def test_` statis / 228 test cases ter-ekspansi `parametrize`).
+  - Meskipun ke-5 fungsi benchmark di [test_performance_benchmarks.py](../tests/test_performance_benchmarks.py) ikut lulus dalam `225 passed`, pengujian tersebut pada mode `-q` berjalan menggunakan citra sintetis kecil (`128×128` 6 frame untuk stacking; `256×256` untuk background, CLAHE, histogram, dan flat-field), hanya memvalidasi asersi `assert t_* > 0.0`, serta menahan keluaran `stdout`. Oleh karena itu, **angka durasi median (ms/s) dan alokasi RAM puncak (`tracemalloc` MB) belum diukur melalui sesi benchmark performa khusus (`-s`) dan tidak dikarang pada dokumen ini**.
+
+### 5.2 Matriks Status Verifikasi 4 Lapis per Temuan (`ISSUE-01` s.d. `ISSUE-09`)
+
+| ID | Status Review (14 Nov 2026) | Implementasi Kode | Unit Test & Celah Spesifik | Runtime & Validasi Nyata |
+|---|---|---|---|---|
+| **ISSUE-01** | `CODE IMPLEMENTED — UNIT TEST INCOMPLETE` | `FrameListPanel.populate_sequence` ([top_panels.py:183-224](../src/hilalone/gui/top_panels.py#L183-L224)) sudah menampilkan badge `[status]`, warna `#f87171` (ERROR), `#facc15` (INCOMPATIBLE), `#e2e8f0` (COMPATIBLE), status default `Unchecked` bagi frame bermasalah, dan tooltip detail. | `test_frame_list_panel_checkboxes` ([test_redesign_ui.py:321-348](../tests/test_redesign_ui.py#L321-L348)) hanya menguji item `COMPATIBLE`; belum ada unit test widget `FrameListPanel` khusus yang memeriksa badge, warna, dan `Unchecked` untuk status `ERROR`/`INCOMPATIBLE`. | Termasuk dalam keseluruhan baseline suite `offscreen` (`225 passed, 3 skipped` / `228 test cases` di 18 berkas test). |
+| **ISSUE-02** | `PARTIALLY FIXED — UNIT TEST MISSING` | Dua lokasi awal di `main_window.py` (`1204-1206` dan `4086-4088`, semula di baris `1154`/`3790`) kini mencatat warning ke `self.log_manager`. **Sisa yang belum diperbaiki**: [histogram_window.py:607-608](../src/hilalone/gui/histogram_window.py#L582-L608) pada `export_table_csv` (bukan `_export_graph_png`) masih berisi `except Exception: return False` tanpa log, dan beberapa blok `except Exception:` di `main_window.py` (`485`, `502`, `592`, `606`, `5057`) belum mencatat ke `LogManager`. | `test_log_manager_and_export` menguji `LogManager` secara umum, namun belum ada unit test yang menyimulasikan gagal preview/ekspor CSV untuk memastikan warning tercatat di `LogManager`. | Termasuk dalam keseluruhan baseline suite `offscreen` (`225 passed, 3 skipped`); skenario gagal spesifik belum diuji. |
+| **ISSUE-03** | `BENCHMARK SUITE CREATED — PERFORMANCE METRICS NOT RECORDED` | Modul [test_performance_benchmarks.py](../tests/test_performance_benchmarks.py) sudah tersedia dengan 5 fungsi benchmark memakai `time.perf_counter()` & `tracemalloc`. | Ke-5 fungsi benchmark menguji asersi dasar `t_* > 0.0` pada sampel sintetis kecil (`128×128` dan `256×256`). | Ke-5 fungsi ikut lulus sebagai bagian dari keseluruhan baseline suite (`225 passed, 3 skipped` di 18 berkas test), namun **angka benchmark khusus (`-s`, beban produksi, dan RAM MB)** belum diukur/dicatat. |
+| **ISSUE-04** | `CODE FIXED (STATIC) — BASELINE RUNTIME NO WARNINGS SUMMARY — EXPLICIT WARNING VALIDATION PENDING` | **Pemeriksaan statis**: `0` kemunculan `mirrored(` maupun `.pos(` ditemukan di `src/hilalone/` maupun `tests/`. Diganti `QTransform` & `event.position().toPoint()` ([image_viewer.py](../src/hilalone/gui/image_viewer.py#L426-L466), [main_window.py](../src/hilalone/gui/main_window.py#L1827-L1869)), serta `QPointF` pada `tests/test_image_viewer_toolbar.py:89-125`. | Konstruktor test toolbar dimutakhirkan ke `QPointF`; **validasi eksplisit** warning pytest belum memiliki assertion/pengujian terpisah. | **Baseline runtime**: `pytest -q` (`61.62s`) & `pytest -rs -q` (`51.63s`, `225 passed, 3 skipped`) di PySide6 `6.12.0` `offscreen` tidak memunculkan *warnings summary*. Namun observasi ini **tidak diklaim sebagai nol `DeprecationWarning` secara mutlak**; **explicit warning validation** (`-W default::DeprecationWarning` / `-W error::DeprecationWarning`) masih **PENDING**. |
+| **ISSUE-05** | `CODE IMPLEMENTED — TARGET RESOLUTION & DPI SCALING TESTS INCOMPLETE` | `setFixedHeight(145)` diganti menjadi `setMinimumHeight(120)` & `setMaximumHeight(155)` pada `OpenImagePanel`, `FrameListPanel`, dan `ImageInfoPanel` ([top_panels.py](../src/hilalone/gui/top_panels.py#L44-L46)), dan panel atas disembunyikan secara default. | `test_responsive_layout_on_small_and_large_windows` ([test_image_viewer_toolbar.py:366-384](../tests/test_image_viewer_toolbar.py#L366-L384)) menguji `1333×768` dan `800×560`; belum menguji `1366×768`, `1600×900`, `1920×1080`, maupun Display Scaling Windows `100%/125%/150%`. | Lulus dalam keseluruhan baseline suite `offscreen` (`225 passed, 3 skipped`); uji visual DPI Scaling `125%/150%` pada Windows non-offscreen belum diverifikasi. |
+| **ISSUE-06** | `CODE IMPLEMENTED — ACCESSIBILITY TEST MISSING` | Aturan QSS `:focus` ditambahkan pada `APP_STYLESHEET` (`#38bdf8`, [styles.py:165-173](../src/hilalone/gui/styles.py#L165-L173)) dan `NIGHT_VISION_RED_STYLESHEET` (`#ef4444`, [styles.py:832-840](../src/hilalone/gui/styles.py#L832-L840)). | `test_stylesheets_validity` dan `test_dark_and_night_vision_stylesheets_complete` belum memeriksa aturan `:focus` maupun *tab order*. | Navigasi keyboard `Tab` interaktif non-offscreen belum diverifikasi. |
+| **ISSUE-07** | `PARTIALLY IMPLEMENTED — QSS STILL HARDCODED — NO TEST` | Dataclass `DesignTokens` beserta instance `DARK_TOKENS` dan `NIGHT_VISION_TOKENS` telah didefinisikan di [styles.py:24-89](../src/hilalone/gui/styles.py#L24-L89) *(catatan audit awal menyebut `DARK_THEME`/`NIGHT_VISION_THEME`)*. Namun string QSS `APP_STYLESHEET` dan `NIGHT_VISION_RED_STYLESHEET` belum menginterpolasi token tersebut dan masih hardcoded. | Belum ada unit test yang memvalidasi pemakaian atau konsistensi `DesignTokens`. | Stylesheet syntax smoke lulus dalam keseluruhan baseline suite (`225 passed, 3 skipped`). |
+| **ISSUE-08** | `PARTIALLY FIXED — FPS UNIT GAP & UNIT TEST PARTIAL` | Sudah diperbaiki: `fits_exptime` (`s`/`ms`/`µs`), `bit_depth` jujur, resolusi `px`, dan video sidebar (`FRAME_RATE` `fps`, `DURATION` `s`). **Celah tersisa**: entri `"FPS"` pada kartu & dialog metadata ([main_window.py:1411](../src/hilalone/gui/main_window.py#L1411), [info_dialog.py:400](../src/hilalone/gui/info_dialog.py#L400)) masih memformat angka tanpa kata `fps`, dan satuan `ADU` belum tampil pada ringkasan GUI. | Teruji parsial melalui `test_exposure_time_formatter_cases`, `test_exposure_time_formatting_preserves_source_fits_header_precision`, `test_16bit_info_text_is_honest`, dan `test_gui_raw_metadata_label_and_honest_bit_depth`; belum ada tes untuk satuan `fps` di dialog/kartu maupun `ADU`. | Lulus dalam keseluruhan baseline suite `offscreen` (`225 passed, 3 skipped`). |
+| **ISSUE-09** | `NOT COMPLETED — DETAIL SECTION ADDED IN REVIEW — NO TEST` | *(Uraian temuan ini sebelumnya belum ditulis di Bagian 3 audit awal.)* Pada dialog dan panel sekunder, nilai margin/spacing seperti `14`, `10`, `6`, `2` px masih dipakai di [info_dialog.py:82-83](../src/hilalone/gui/info_dialog.py#L82-L83), [curves_window.py:476-579](../src/hilalone/gui/curves_window.py#L476-L579), [histogram_window.py:346-426](../src/hilalone/gui/histogram_window.py#L346-L426), dan [console_panel.py:153-159](../src/hilalone/gui/console_panel.py#L153-L159), belum seragam kelipatan grid `4px/8px`. | Belum ada unit test khusus untuk konsistensi grid spasi `4px/8px`. | Belum diverifikasi secara visual sebagai kesesuaian grid system. |
+
+### 5.3 Pembaruan Status Jadwal Eksekusi (`PHASE 1`–`PHASE 6`) & Keputusan Maintainer
+
+- **`PHASE 1` (Dokumentasi Audit Awal)**: **SELESAI** (12 November 2026) + diperbarui review status **14 November 2026**.
+- **`PHASE 2` s.d. `PHASE 5`**: **`PARTIAL — CODE IMPLEMENTED / TEST & CODE GAPS REMAIN`** (mayoritas perbaikan inti ada dan keseluruhan baseline test suite lulus, namun menyisakan celah kode pada `ISSUE-02`, `ISSUE-07`, `ISSUE-08`, `ISSUE-09`, celah unit test / DPI scaling pada `ISSUE-01`, `02`, `05`, `06`, `07`, `08`, `09`, serta *explicit warning validation* pada `ISSUE-04`).
+- **`PHASE 6` (Final Validation & Benchmarking)**: **`BASELINE SUITE VERIFIED (225 PASSED, 3 SKIPPED OFFSCREEN) — PERFORMANCE BENCHMARK METRICS & FINAL ACCEPTANCE REPORT PENDING`** — Baseline regresi pada `.venv` (`Python 3.10.11`, `PySide6 6.12.0`) terkonfirmasi **`225 passed, 3 skipped`** (`228 test cases`, `61.62 seconds` pada pengujian pertama; 3 *skipped* akibat sampel eksternal tidak ada). Namun pengukuran metrik benchmark performa khusus, verifikasi validasi ilmiah data hilal nyata, uji Display Scaling `125%/150%`, serta penyusunan Laporan Akhir Penerimaan Kualitas masih terbuka.
+- **Catatan Lintas Dokumen (Pending Maintainer):** Status deviasi *position stability* (`IMPLEMENTATION DEVIATION — PENDING MAINTAINER CONFIRMATION`) serta status CLI (`CLI NOT IMPLEMENTED — PYTHON PIPELINE API AVAILABLE — SCOPE DECISION PENDING`) dijelaskan pada [project_overview.md](project_overview.md) dan [development_roadmap.md](development_roadmap.md) dan masih menunggu keputusan resmi maintainer.
