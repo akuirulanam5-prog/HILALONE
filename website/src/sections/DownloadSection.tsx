@@ -19,15 +19,30 @@ export function DownloadSection() {
               />
 
               {ready && siteConfig.downloadUrl ? (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.85rem" }}>
-                  <a
-                    href={siteConfig.downloadUrl}
-                    className="btn btn--primary"
-                    rel="noopener noreferrer"
-                  >
-                    <Download size={18} aria-hidden="true" />
-                    <span>Unduh {siteConfig.installerFilename}</span>
-                  </a>
+                <div>
+                  <div className="download-actions">
+                    <a
+                      href={siteConfig.downloadUrl}
+                      className="btn btn--primary"
+                      download={siteConfig.installerFilename}
+                      rel="noopener noreferrer"
+                    >
+                      <Download size={18} aria-hidden="true" />
+                      <span>Unduh {siteConfig.installerFilename}</span>
+                    </a>
+
+                    {siteConfig.repoIsPublic ? (
+                      <a
+                        href={siteConfig.releasePageUrl ?? siteConfig.githubUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn btn--secondary"
+                      >
+                        <span>Lihat GitHub Releases</span>
+                        <ExternalLink size={16} aria-hidden="true" />
+                      </a>
+                    ) : null}
+                  </div>
                 </div>
               ) : (
                 <div>
@@ -48,7 +63,7 @@ export function DownloadSection() {
                     </div>
                   </div>
 
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.85rem" }}>
+                  <div className="download-actions">
                     <button
                       type="button"
                       className="btn btn--primary"

@@ -31,22 +31,22 @@ export const siteConfig: SiteConfig = {
   platform: "Windows Desktop (64-bit)",
 
   // Konfigurasi terpusat distribusi installer Windows.
-  // Aktifkan `downloadAvailable: true` dan isi metadata resmi setelah GitHub Release diterbitkan.
-  downloadAvailable: false,
-  downloadUrl: null,
-  installerFilename: "HILALONE_Setup.exe",
-  fileSize: null,
+  downloadAvailable: true,
+  downloadUrl:
+    "https://github.com/akuirulanam5-prog/HILALONE/releases/download/v1.0.0/HILALONE_Setup_v1.0.exe",
+  installerFilename: "HILALONE_Setup_v1.0.exe",
+  fileSize: "90,8 MB (95.195.800 byte)",
   supportedWindows: "Windows 10 (64-bit, teruji) · Target Windows 11 (64-bit, belum diuji langsung)",
-  releaseDate: null,
-  sha256: null,
-  releasePageUrl: "https://github.com/akuirulanam5-prog/HILALONE/releases",
+  releaseDate: "15 November 2026",
+  sha256: "dd91fd214d49d6a04fde036687839af9b17e868a03bf7da4196e9788aad4ad2c",
+  releasePageUrl: "https://github.com/akuirulanam5-prog/HILALONE/releases/tag/v1.0.0",
 
   // Repositori GitHub publik (terverifikasi HTTP 200, private=false)
   githubUrl: "https://github.com/akuirulanam5-prog/HILALONE",
   repoIsPublic: true,
 
-  // Isi URL produksi setelah domain ditetapkan
-  canonicalUrl: null,
+  // URL produksi resmi Vercel
+  canonicalUrl: "https://hilalone-website.vercel.app",
 
   copyrightHolder: "HILALONE Project",
   copyrightYear: "2026",

@@ -17,7 +17,7 @@ export function WorkflowSection() {
           icon={<GitCommitHorizontal size={14} aria-hidden="true" />}
         />
 
-        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "1.25rem" }}>
+        <div className="workflow-legend">
           <span className="status-badge status-badge--ok">Tahap Wajib Pipeline</span>
           <span className="status-badge status-badge--planned">Khusus Multi-Frame / Video / SER</span>
           <span className="status-badge status-badge--partial">Garis Putus-Putus: Opsional (Flat Calibration)</span>
@@ -69,7 +69,7 @@ export function WorkflowSection() {
           <p className="card__text" style={{ marginBottom: "0.85rem", fontSize: "0.96rem" }}>
             {current.technicalDetail}
           </p>
-          <div style={{ fontSize: "0.86rem", fontFamily: "var(--font-mono)", color: "var(--accent-cyan)" }}>
+          <div className="workflow-detail-card__output">
             Keluaran tahap: {current.outputs}
           </div>
         </div>

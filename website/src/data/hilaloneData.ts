@@ -543,7 +543,7 @@ export const ROADMAP_STAGES: readonly RoadmapStage[] = [
       { label: "Reader FITS, TIFF, Video (MP4/MOV/AVI), SER, PNG/JPEG & Pipeline", badge: "Teruji" },
       { label: "RAW Kamera Reader (LibRaw / rawpy)", badge: "Parsial (belum uji RAW kamera asli)" },
       { label: "PyInstaller ONE-DIR Build (v1.0.0)", badge: "Teruji di mesin dev terisolasi" },
-      { label: "Installer Windows (HILALONE_Setup.exe) & Uji PC Non-Dev", badge: "Dalam persiapan" },
+      { label: "Installer Windows (HILALONE_Setup_v1.0.exe)", badge: "Tersedia (v1.0.0)" },
     ],
   },
   {
@@ -674,7 +674,7 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
     id: "how-to-download",
     question: "Bagaimana mengunduh aplikasi?",
     answer:
-      "Saat ini paket installer resmi Windows (HILALONE_Setup.exe) untuk v1.0.0 masih dalam tahap persiapan rilis. Tautan unduhan pada bagian Unduh akan diaktifkan setelah berkas installer resmi diterbitkan di halaman GitHub Releases.",
+      "Anda dapat mengunduh paket installer resmi Windows (HILALONE_Setup_v1.0.exe) secara langsung melalui tombol Unduh di bagian Distribusi Aplikasi pada halaman ini atau melalui halaman GitHub Releases resmi beserta verifikasi checksum SHA-256.",
   },
   {
     id: "report-bugs",

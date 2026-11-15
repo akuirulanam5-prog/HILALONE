@@ -91,7 +91,7 @@ export function FeaturesSection() {
             })}
           </div>
 
-          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+          <div className="filter-bar__badges">
             <span className="status-badge status-badge--ok">TERUJI: 19 Fitur</span>
             <span className="status-badge status-badge--partial">PARSIAL: 1 Fitur (RAW Kamera Asli)</span>
           </div>

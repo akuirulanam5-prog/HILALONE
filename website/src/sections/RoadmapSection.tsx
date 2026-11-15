@@ -22,16 +22,7 @@ export function RoadmapSection() {
                 className="card"
                 style={isActive ? { borderColor: "var(--border-accent)" } : undefined}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: "0.5rem",
-                    marginBottom: "0.75rem",
-                    flexWrap: "wrap",
-                  }}
-                >
+                <div className="roadmap-card__head">
                   <span className="eyebrow" style={{ marginBottom: 0 }}>
                     {stage.stage}
                   </span>
@@ -51,40 +42,11 @@ export function RoadmapSection() {
                   {stage.summary}
                 </p>
 
-                <ul
-                  style={{
-                    margin: 0,
-                    padding: 0,
-                    listStyle: "none",
-                    display: "grid",
-                    gap: "0.55rem",
-                    borderTop: "1px solid var(--border-subtle)",
-                    paddingTop: "0.85rem",
-                  }}
-                >
+                <ul className="roadmap-list">
                   {stage.items.map((item) => (
-                    <li
-                      key={item.label}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "flex-start",
-                        gap: "0.5rem",
-                        fontSize: "0.84rem",
-                        color: "var(--text-secondary)",
-                      }}
-                    >
+                    <li key={item.label} className="roadmap-list__item">
                       <span>{item.label}</span>
-                      <span
-                        style={{
-                          fontFamily: "var(--font-mono)",
-                          fontSize: "0.72rem",
-                          color: "var(--accent-cyan)",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {item.badge}
-                      </span>
+                      <span className="roadmap-list__badge">{item.badge}</span>
                     </li>
                   ))}
                 </ul>

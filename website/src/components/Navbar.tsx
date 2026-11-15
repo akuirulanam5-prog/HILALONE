@@ -52,13 +52,26 @@ export function Navbar() {
     if (!menuOpen) {
       return;
     }
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setMenuOpen(false);
       }
     };
+    const onResize = () => {
+      if (window.innerWidth >= 1024) {
+        setMenuOpen(false);
+      }
+    };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", onResize);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", onResize);
+    };
   }, [menuOpen]);
 
   return (

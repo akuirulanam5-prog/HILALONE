@@ -92,7 +92,7 @@ export function ScreenshotLightbox({
           <p className="card__text" style={{ maxWidth: "68ch" }}>
             {current.caption}
           </p>
-          <div style={{ display: "flex", gap: "0.5rem" }}>
+          <div className="modal-panel__nav">
             <button
               type="button"
               className="btn btn--secondary btn--sm"
