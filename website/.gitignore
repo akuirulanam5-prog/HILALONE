@@ -1,0 +1,18 @@
+# Dependensi Node
+node_modules/
+
+# Output build statis Vite (terpisah dari dist aplikasi desktop)
+dist/
+dist-ssr/
+
+# Deployment Vercel & environment lokal
+.vercel/
+.env
+.env.*
+!.env.example
+
+# Log & berkas lokal
+*.log
+*.local
+.DS_Store
+Thumbs.db

@@ -1,0 +1,39 @@
+:root {
+  /* Palet Utama HILALONE — Deep Navy & Astronomical Dark */
+  --bg-primary: #050b18;
+  --bg-secondary: #0a1428;
+  --bg-surface: #0e1a33;
+  --bg-surface-elevated: #132242;
+  --bg-night-red: #1b090c;
+
+  /* Aksen Terkendali */
+  --accent-cyan: #38bdf8;
+  --accent-electric: #3b82f6;
+  --accent-indigo: #818cf8;
+  --accent-violet: #6366f1;
+  --accent-gold: #d4a853;
+  --accent-emerald: #34d399;
+  --accent-red: #e05252;
+
+  /* Tipografi & Kontras */
+  --text-primary: #f1f5f9;
+  --text-secondary: #9aaac2;
+  --text-muted: #7688a3;
+
+  /* Garis & Border Halus */
+  --border-subtle: rgba(148, 163, 184, 0.14);
+  --border-accent: rgba(56, 189, 248, 0.34);
+  --border-gold: rgba(212, 168, 83, 0.34);
+
+  /* Font */
+  --font-sans: "Plus Jakarta Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+
+  /* Dimensi & Spasi */
+  --container-max: 1200px;
+  --nav-height: 72px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+}
