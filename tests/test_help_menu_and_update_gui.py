@@ -34,18 +34,18 @@ def _make_sample_update_result() -> UpdateCheckResult:
     data = b"sample-setup-exe"
     sha = hashlib.sha256(data).hexdigest()
     asset = ReleaseAsset(
-        name="HILALONE_Setup_v1.1.0.exe",
-        download_url="https://github.com/akuirulanam5-prog/HILALONE/releases/download/v1.1.0/HILALONE_Setup_v1.1.0.exe",
+        name="HILALONE_Setup_v1.2.0.exe",
+        download_url="https://github.com/akuirulanam5-prog/HILALONE/releases/download/v1.2.0/HILALONE_Setup_v1.2.0.exe",
         size=95_195_800,
         digest=f"sha256:{sha}",
     )
     release = ReleaseInfo(
-        tag_name="v1.1.0",
-        version=parse_version("v1.1.0"),
-        name="HILALONE v1.1.0",
+        tag_name="v1.2.0",
+        version=parse_version("v1.2.0"),
+        name="HILALONE v1.2.0",
         body="- Pembaruan menu Help\n- Perbaikan stabilitas",
         published_at="2026-11-20T09:30:00Z",
-        html_url="https://github.com/akuirulanam5-prog/HILALONE/releases/tag/v1.1.0",
+        html_url="https://github.com/akuirulanam5-prog/HILALONE/releases/tag/v1.2.0",
         draft=False,
         prerelease=False,
         assets=(asset,),
@@ -55,7 +55,7 @@ def _make_sample_update_result() -> UpdateCheckResult:
         local_version=__version__,
         release=release,
         installer_asset=asset,
-        message="Pembaruan HILALONE v1.1.0 tersedia.",
+        message="Pembaruan HILALONE v1.2.0 tersedia.",
     )
 
 
@@ -202,7 +202,7 @@ def test_update_dialog_frozen_download_and_safe_close_and_dev_mode(
     dev_dlg = UpdateDialog(result, is_frozen=False)
     try:
         assert dev_dlg.lbl_current_ver.text() == f"v{__version__}"
-        assert dev_dlg.lbl_latest_ver.text() == "v1.1.0"
+        assert dev_dlg.lbl_latest_ver.text() == "v1.2.0"
         assert "2026-11-20" in dev_dlg.lbl_release_date.text()
         assert "90.8 MB" in dev_dlg.lbl_installer_size.text()
         assert "Pembaruan menu Help" in dev_dlg.notes_edit.toPlainText()
@@ -231,12 +231,12 @@ def test_update_dialog_frozen_download_and_safe_close_and_dev_mode(
 
         dev_dlg.btn_download_install.click()
         assert len(info_shown) == 1
-        assert opened_urls == ["https://github.com/akuirulanam5-prog/HILALONE/releases/tag/v1.1.0"]
+        assert opened_urls == ["https://github.com/akuirulanam5-prog/HILALONE/releases/tag/v1.2.0"]
     finally:
         dev_dlg.close()
 
     # 2. Mode terinstal (is_frozen=True): download terverifikasi + konfirmasi + launch + close signal
-    installer_file = tmp_path / "HILALONE_Setup_v1.1.0.exe"
+    installer_file = tmp_path / "HILALONE_Setup_v1.2.0.exe"
     installer_bytes = b"MZ-verified-binary"
     installer_file.write_bytes(installer_bytes)
     sha_hex = hashlib.sha256(installer_bytes).hexdigest()
