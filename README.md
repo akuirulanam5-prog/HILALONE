@@ -1,6 +1,6 @@
 # HILALONE — Automated Hilal Image Processing
 
-**HILALONE** (v1.0.0) adalah aplikasi desktop Windows berbasis Python dan PySide6 untuk pengolahan citra pengamatan hilal dan bulan sabit muda secara otomatis, ilmiah, dan deterministik dengan prinsip *"Enhance the Signal, Never Invent the Signal"*.
+**HILALONE** (v1.1.1) adalah aplikasi desktop Windows berbasis Python dan PySide6 untuk pengolahan citra pengamatan hilal dan bulan sabit muda secara otomatis, ilmiah, dan deterministik dengan prinsip *"Enhance the Signal, Never Invent the Signal"*.
 
 ---
 
@@ -32,7 +32,9 @@
 
 ```text
 HILALONE/
-├─ assets/branding/       # Ikon aplikasi (.ico) dan logo Standard / Night Vision Red (.png)
+├─ assets/
+│  ├─ branding/           # Ikon ringkas, ikon (.ico), dan logo lengkap Standard / Night Vision Red
+│  └─ hilalone-icons/     # Paket sumber resmi ikon & logo (SVG, PNG, ICO, Web)
 ├─ docs/                  # Dokumen spesifikasi, roadmap, gambaran proyek, & laporan audit
 ├─ hooks/                 # Hook PyInstaller kustom (astropy)
 ├─ src/hilalone/

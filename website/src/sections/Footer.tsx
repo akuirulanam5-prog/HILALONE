@@ -8,10 +8,10 @@ export function Footer() {
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.75rem" }}>
               <picture>
-                <source srcSet="/branding/hilalone-logo-standard-96.webp" type="image/webp" />
+                <source srcSet="/branding/hilalone-icon-standard-96.webp" type="image/webp" />
                 <img
-                  src="/branding/hilalone-logo-standard-96.png"
-                  alt="Logo HILALONE"
+                  src="/branding/hilalone-icon-standard-96.png"
+                  alt="Ikon HILALONE"
                   width={38}
                   height={38}
                 />

@@ -15,7 +15,7 @@ export function PreviewGallerySection() {
       <div className="container">
         <SectionHeader
           eyebrow="Pratinjau Antarmuka Nyata"
-          title="Galeri Antarmuka Desktop HILALONE v1.0.0"
+          title="Galeri Antarmuka Desktop HILALONE v1.1.1"
           subtitle="Seluruh tangkapan layar diambil langsung dari aplikasi PySide6 HILALONE. Tampilan pemrosesan di viewer memakai data uji sintetis, bukan hasil observasi nyata."
           icon={<Monitor size={14} aria-hidden="true" />}
         />

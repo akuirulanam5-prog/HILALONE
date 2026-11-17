@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from hilalone import APP_NAME, APP_SUBTITLE, __version__
-from hilalone.gui.resources import get_app_icon, get_logo_pixmap
+from hilalone.gui.resources import get_app_icon, get_compact_logo_pixmap
 from hilalone.gui.styles import DARK_TOKENS, NIGHT_VISION_TOKENS
 from hilalone.updates.models import GITHUB_OWNER, GITHUB_REPO, OFFICIAL_WEBSITE_URL
 
@@ -142,7 +142,7 @@ class AboutDialog(QDialog):
         if not icon.isNull():
             self.setWindowIcon(icon)
 
-        raw_logo: QPixmap = get_logo_pixmap(night_vision=self._is_night_vision)
+        raw_logo: QPixmap = get_compact_logo_pixmap(night_vision=self._is_night_vision)
         if not raw_logo.isNull():
             scaled = raw_logo.scaled(
                 84,

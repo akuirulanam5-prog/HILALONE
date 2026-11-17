@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="193 193 1546 1546" width="1024" height="1024" role="img" aria-label="HILALONE icon">
+<title>HILALONE</title>
+<defs>
+ <linearGradient id="rim" x1="0.15" y1="0.05" x2="0.7" y2="1">
+  <stop offset="0" stop-color="#4DF2F2"/><stop offset="0.45" stop-color="#2F9BEA"/><stop offset="1" stop-color="#3A5BF0"/>
+ </linearGradient>
+ <linearGradient id="fr" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0" stop-color="#3EF2E6"/><stop offset="0.5" stop-color="#2BB8F5"/><stop offset="1" stop-color="#3F5EF0"/>
+ </linearGradient>
+ <linearGradient id="frFront" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0" stop-color="#7DF7E4"/><stop offset="0.5" stop-color="#43B6F2"/><stop offset="1" stop-color="#3FA0E8"/>
+ </linearGradient>
+ <linearGradient id="fill" x1="0" y1="0" x2="1" y2="1">
+  <stop offset="0" stop-color="#14537F"/><stop offset="1" stop-color="#1B3A7E"/>
+ </linearGradient>
+ <linearGradient id="arrows" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0" stop-color="#7DF7E4"/><stop offset="1" stop-color="#3B5CF0"/>
+ </linearGradient>
+ <clipPath id="midclip"><path d="M820 560 H1300 V1000 H885 V800 H820 Z"/></clipPath>
+ <clipPath id="cut"><circle cx="1090" cy="740" r="281"/></clipPath>
+ <mask id="moon">
+  <rect x="500" y="400" width="900" height="800" fill="#000"/>
+  <circle cx="980" cy="810" r="333" fill="#fff"/>
+  <circle cx="1090" cy="740" r="283" fill="#000"/>
+ </mask>
+ <mask id="moonWhite">
+  <rect x="500" y="400" width="900" height="800" fill="#000"/>
+  <circle cx="990" cy="806" r="291" fill="#fff"/>
+  <circle cx="1090" cy="740" r="283" fill="#000"/>
+ </mask>
+</defs>
+<circle cx="966" cy="966" r="773" fill="#0F2145"/>
+<g transform="translate(966 966) scale(1.38) translate(-965 -810)">
+<g id="crescent">
+ <rect x="500" y="400" width="900" height="800" fill="url(#rim)" mask="url(#moon)"/>
+ <rect x="500" y="400" width="900" height="800" fill="#fff" mask="url(#moonWhite)"/>
+</g>
+<g id="frames" stroke-linejoin="round">
+ <rect x="933" y="566" width="360" height="306" rx="12" fill="url(#fill)" stroke="url(#fr)" stroke-width="20"/>
+ <rect x="876" y="631" width="352" height="289" rx="12" fill="url(#fill)" stroke="url(#fr)" stroke-width="20" clip-path="url(#midclip)"/>
+ <rect x="846" y="696" width="314" height="279" fill="#0F2145" clip-path="url(#cut)"/>
+ <path d="M846 696 H1148 Q1160 696 1160 708 V963 Q1160 975 1148 975 H1022 L972 965" fill="none" stroke="url(#frFront)" stroke-width="20" stroke-linecap="butt"/>
+</g>
+<g id="refresh">
+ <circle cx="1001" cy="833" r="21" fill="#29C5F0"/>
+ <path d="M925 833 A80 80 0 0 1 1058 778" fill="none" stroke="url(#arrows)" stroke-width="17"/>
+ <path d="M1085 760 L1087 818 L1033 804 Z" fill="#6CEFE6"/>
+ <path d="M1083 836 A80 80 0 0 1 944 886" fill="none" stroke="url(#arrows)" stroke-width="17"/>
+ <path d="M918 851 L972 862 L922 908 Z" fill="#3E8CF0"/>
+</g></g>
+</svg>

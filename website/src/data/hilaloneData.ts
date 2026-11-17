@@ -1,3 +1,5 @@
+import { siteConfig } from "./siteConfig";
+
 export type VerificationStatus = "TERUJI" | "PARSIAL" | "DIRENCANAKAN";
 
 export type FeatureCategory =
@@ -319,9 +321,9 @@ export const SCREENSHOTS: readonly ScreenshotItem[] = [
     category: "Antarmuka Awal",
     src1600: "/screenshots/main-empty-dark-1600.webp",
     src800: "/screenshots/main-empty-dark-800.webp",
-    alt: "Tampilan utama HILALONE v1.0.0 mode Standard Dark dengan logo di tengah Image Viewer dan panel accordion kanan.",
+    alt: "Tampilan utama HILALONE v1.1.1 mode Standard Dark dengan ikon dan logo resmi baru serta menu Help.",
     caption:
-      "Tampilan awal HILALONE v1.0.0 dalam tema Standard Dark: branding resmi di tengah viewport, toolbar viewer di bawah, dan panel inspeksi accordion di sisi kanan.",
+      "Tampilan awal HILALONE v1.1.1 dalam tema Standard Dark: ikon ringkas baru di header, logo lengkap resmi di tengah viewport, menu Help (Update System), dan panel inspeksi kanan.",
     isSyntheticSample: false,
   },
   {
@@ -330,9 +332,9 @@ export const SCREENSHOTS: readonly ScreenshotItem[] = [
     category: "Pipeline Otomatis",
     src1600: "/screenshots/processing-result-dark-1600.webp",
     src800: "/screenshots/processing-result-dark-800.webp",
-    alt: "Hasil pemrosesan otomatis profil Medium pada sequence sintetis di HILALONE dengan ringkasan metode stacking dan statistik frame.",
+    alt: "Hasil pemrosesan otomatis profil Basic standar pada sequence sintetis 8 frame di HILALONE.",
     caption:
-      "Antarmuka hasil pemrosesan otomatis profil Medium (8 frame). Catatan jujur: citra di viewer merupakan data uji sintetis (gradien langit, vignetting, dan sabit buatan), bukan foto observasi nyata.",
+      "Antarmuka hasil pemrosesan otomatis profil Basic standar (8 frame). Catatan jujur: citra di viewer merupakan data uji sintetis (gradien langit, vignetting, dan sabit buatan), bukan foto observasi nyata.",
     isSyntheticSample: true,
   },
   {
@@ -385,9 +387,9 @@ export const SCREENSHOTS: readonly ScreenshotItem[] = [
     category: "Tema Astronomi",
     src1600: "/screenshots/main-empty-night-1600.webp",
     src800: "/screenshots/main-empty-night-800.webp",
-    alt: "Tampilan awal HILALONE v1.0.0 dalam mode Night Vision Red dengan logo merah khusus.",
+    alt: "Tampilan awal HILALONE v1.1.1 dalam mode Night Vision Red dengan varian logo dan ikon merah baru.",
     caption:
-      "Kondisi awal aplikasi pada tema Night Vision Red sebelum citra dibuka, menampilkan logo resmi Night Vision Red.",
+      "Kondisi awal aplikasi pada tema Night Vision Red sebelum citra dibuka, menampilkan varian logo dan ikon resmi baru bertema merah observasi malam.",
     isSyntheticSample: false,
   },
 ];
@@ -674,7 +676,7 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
     id: "how-to-download",
     question: "Bagaimana mengunduh aplikasi?",
     answer:
-      "Anda dapat mengunduh paket installer resmi Windows (HILALONE_Setup_v1.0.exe) secara langsung melalui tombol Unduh di bagian Distribusi Aplikasi pada halaman ini atau melalui halaman GitHub Releases resmi beserta verifikasi checksum SHA-256.",
+      `Anda dapat mengunduh paket installer resmi Windows (${siteConfig.installerFilename}) secara langsung melalui tombol Unduh di bagian Distribusi Aplikasi pada halaman ini atau melalui halaman GitHub Releases resmi beserta verifikasi checksum SHA-256.`,
   },
   {
     id: "report-bugs",
