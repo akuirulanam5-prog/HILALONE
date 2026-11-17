@@ -523,12 +523,14 @@ class AutomaticStackingEngine:
                 )
                 raw_metrics_list.append((frame_idx, fname, bg, sig, grad))
                 sum_acc += arr_f32.astype(np.float64)
-                _notify_progress(
-                    progress_callback,
-                    step_idx,
-                    n_active,
-                    f"Menumpuk frame [{step_idx}/{n_active}] (Arithmetic Mean)...",
-                )
+                prog_step_interval = max(1, n_active // 20)
+                if step_idx == 1 or step_idx == n_active or (step_idx % prog_step_interval == 0):
+                    _notify_progress(
+                        progress_callback,
+                        step_idx,
+                        n_active,
+                        f"Menumpuk frame [{step_idx}/{n_active}] (Arithmetic Mean)...",
+                    )
 
             stacked_f32 = (sum_acc / float(n_active)).astype(np.float32)
             stacked_f32.flags.writeable = False

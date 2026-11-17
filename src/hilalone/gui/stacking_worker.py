@@ -11,10 +11,12 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
+from typing import TYPE_CHECKING
 
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
+from hilalone.core.logging import LogModule
 from hilalone.input_manager.sequence_manager import SequenceManager
 from hilalone.processing.stacking import (
     AutomaticStackingEngine,
@@ -24,6 +26,9 @@ from hilalone.processing.stacking import (
     StackingError,
     StackingProfile,
 )
+
+if TYPE_CHECKING:
+    from hilalone.core.logging import HilaloneLogger
 
 
 class StackingWorker(QThread):
@@ -46,6 +51,8 @@ class StackingWorker(QThread):
         check_position_stability: bool = False,
         confirm_proceed_with_shift_risk: bool = True,
         max_working_memory_mb: int = 128,
+        run_id: str | None = None,
+        log_manager: HilaloneLogger | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -59,6 +66,8 @@ class StackingWorker(QThread):
         self._check_position_stability = check_position_stability
         self._confirm_shift_risk = confirm_proceed_with_shift_risk
         self._max_working_memory_mb = max_working_memory_mb
+        self._run_id = run_id
+        self._log_manager = log_manager
         self._cancel_lock = threading.Lock()
         self._cancel_requested = False
 
@@ -73,6 +82,16 @@ class StackingWorker(QThread):
 
     def _on_engine_progress(self, step: int, total: int, message: str) -> None:
         self.progress_updated.emit(int(step), int(total), str(message))
+        if self._log_manager is not None:
+            pct = int(round(100.0 * max(0, min(step, max(1, total))) / max(1, total)))
+            self._log_manager.progress(
+                LogModule.STACKING,
+                int(step),
+                int(total),
+                f"{pct}% completed ({step}/{total} steps).",
+                operation="stacking",
+                run_id=self._run_id,
+            )
 
     def run(self) -> None:  # pragma: no cover - dijalankan di thread pekerja atau langsung
         engine = AutomaticStackingEngine(max_working_memory_mb=self._max_working_memory_mb)

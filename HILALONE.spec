@@ -37,6 +37,8 @@ hiddenimports = [
     "scipy.interpolate",
     "scipy.ndimage",
     "skimage.exposure",
+    "hilalone.core",
+    "hilalone.core.logging",
 ]
 
 # Kecualikan paket dev & submodul PySide6 berat yang tidak digunakan HILALONE

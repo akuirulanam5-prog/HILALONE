@@ -43,6 +43,17 @@ from PySide6.QtWidgets import (
 import numpy as np
 
 from hilalone import APP_NAME, APP_SUBTITLE
+from hilalone.core.logging import (
+    LogModule,
+    ProcessingRunSummary,
+    format_duration,
+    log_image_input_loaded,
+    log_master_flat_prepared,
+    log_output_saved,
+    log_pipeline_execution_details,
+    log_sequence_validation_report,
+    set_active_logger,
+)
 from hilalone.gui.accordion import AccordionGroup, AccordionHeader, AccordionSection
 from hilalone.gui.console_panel import ConsoleLogPanel, LogEntry, LogLevel, LogManager
 from hilalone.gui.curves_window import CurvesWindow, apply_curve_lut_to_array, apply_curve_lut_to_pixmap
@@ -544,7 +555,12 @@ class MainWindow(QMainWindow):
 
         # Logging, Theme, Metadata, & Windows baru
         self.log_manager = LogManager(self)
+        set_active_logger(self.log_manager)
         self._is_night_vision: bool = False
+        self._curve_applied_in_session: bool = False
+        self._active_pipeline_run_id: str | None = None
+        self._active_pipeline_user_excluded: int = 0
+        self._active_stacking_run_id: str | None = None
         self._custom_metadata: dict[str, tuple[str, str]] = {}
         self._selected_frame_indices: list[int] = []
         self.histogram_window: HistogramWindow | None = None
@@ -564,6 +580,7 @@ class MainWindow(QMainWindow):
         self._apply_theme_to_widgets(self._is_night_vision)
         self._load_user_preferences()
         self.close_image()
+        self.log_manager.log_application_startup()
 
     def _preferences_enabled(self) -> bool:
         """Menghindari pembacaan/penulisan config desktop global saat pengujian pytest berjalan."""
@@ -1183,10 +1200,17 @@ class MainWindow(QMainWindow):
         total = self.sequence_manager.frame_count
         dt = time.perf_counter() - t0
         if total > 0:
+            excluded_cnt = max(0, total - len(selected_indices))
             self.log_manager.info(
-                "FRAME_SELECTION",
-                "Seleksi Frame Diperbarui",
-                f"{len(selected_indices)} dari {total} frame dipilih untuk pemrosesan | Total waktu: {dt:.2f}s",
+                LogModule.SEQUENCE,
+                "User frame selection updated.",
+                f"Selected: {len(selected_indices)}/{total} frames (Excluded by user: {excluded_cnt})",
+                details={
+                    "selected_frames": len(selected_indices),
+                    "total_frames": total,
+                    "excluded_by_user": excluded_cnt,
+                    "duration_ms": round(dt * 1000.0, 2),
+                },
             )
 
     def _get_current_active_scientific_data(self) -> np.ndarray | None:
@@ -1203,7 +1227,10 @@ class MainWindow(QMainWindow):
                     return loaded.scientific_data
                 except Exception as exc:
                     if hasattr(self, "log_manager"):
-                        self.log_manager.warning("DATA", "Ambil Data Frame", f"Gagal membaca data ilmiah frame #{idx + 1}: {exc}")
+                        self.log_manager.warning(
+                            LogModule.INPUT,
+                            f"Failed to read scientific data for frame #{idx + 1}: {exc}",
+                        )
         return None
 
     def open_histogram_window(self) -> None:
@@ -1218,7 +1245,11 @@ class MainWindow(QMainWindow):
         self.histogram_window.raise_()
         self.histogram_window.activateWindow()
         dt = time.perf_counter() - t0
-        self.log_manager.info("TOOLS", "Histogram Dibuka", f"Menampilkan analisis histogram untuk '{title}' | Total waktu: {dt:.2f}s")
+        self.log_manager.info(
+            LogModule.HISTOGRAM,
+            f"Histogram & Image Statistics opened for '{title}'.",
+            details={"target": title, "duration_ms": round(dt * 1000.0, 2)},
+        )
 
     def open_curves_window(self) -> None:
         """Membuka jendela Transformasi Kurva non-modal interaktif."""
@@ -1243,7 +1274,11 @@ class MainWindow(QMainWindow):
         self.curves_window.raise_()
         self.curves_window.activateWindow()
         dt = time.perf_counter() - t0
-        self.log_manager.info("TOOLS", "Kurva Dibuka", f"Menampilkan Transformasi Kurva untuk '{title}' | Total waktu: {dt:.2f}s")
+        self.log_manager.info(
+            LogModule.CURVE,
+            f"Curve Transformation window opened for '{title}'.",
+            details={"target": title, "duration_ms": round(dt * 1000.0, 2)},
+        )
 
     def _on_curves_live_preview(self, lut: np.ndarray, mode: str) -> None:
         """Menerapkan kurva secara instan ke layar untuk pratinjau."""
@@ -1259,6 +1294,12 @@ class MainWindow(QMainWindow):
         t0 = time.perf_counter()
         if not self.viewer.has_image():
             return
+
+        ctrl_points: list[tuple[float, float]] = (
+            list(self.curves_window.canvas.points)
+            if (self.curves_window is not None and hasattr(self.curves_window, "canvas"))
+            else [(0.0, 0.0), (1.0, 1.0)]
+        )
 
         base_qimg = self._curves_backup_qimage if self._curves_backup_qimage is not None else self.viewer.source_qimage()
         if base_qimg is not None:
@@ -1295,15 +1336,47 @@ class MainWindow(QMainWindow):
         if self.histogram_window is not None and self.histogram_window.isVisible():
             self.histogram_window.set_image_data(curved_data, self._current_file_name or "Citra (Kurva)")
 
+        self._curve_applied_in_session = True
         self.statusBar().showMessage("Transformasi Kurva berhasil diterapkan pada citra.", 3000)
         dt_curv = time.perf_counter() - t0
-        self.log_manager.success("CURVES", "Transformasi Kurva Diterapkan", f"Mode: {mode} | Total waktu: {dt_curv:.2f}s")
+        if self.log_manager.is_verbose_enabled:
+            self.log_manager.verbose(
+                LogModule.CURVE,
+                f"Curve adjustment applied | Channel: {mode} | Control points: {len(ctrl_points)}.",
+                details={
+                    "operation": "PCHIP Spline Curve",
+                    "channel": mode,
+                    "control_points_count": len(ctrl_points),
+                    "input_branch": "DISPLAY / Active View",
+                    "output_branch": "DISPLAY / Active View",
+                },
+            )
+        if self.log_manager.is_debug_enabled:
+            self.log_manager.debug(
+                LogModule.CURVE,
+                f"PCHIP LUT generated: samples=256, dtype=float32, control_points={[(round(x, 4), round(y, 4)) for x, y in ctrl_points]}.",
+                details={
+                    "control_points": [(round(x, 4), round(y, 4)) for x, y in ctrl_points],
+                    "lut_samples": 256,
+                },
+            )
+        self.log_manager.success(
+            LogModule.CURVE,
+            "Curve transformation completed.",
+            f"Mode: {mode} | Control points: {len(ctrl_points)} | {format_duration(duration_s=dt_curv)}",
+            details={
+                "channel": mode,
+                "control_points_count": len(ctrl_points),
+                "duration_ms": round(dt_curv * 1000.0, 3),
+            },
+        )
 
     def _on_curves_reset(self) -> None:
         """Mengembalikan tampilan citra ke kondisi sebelum kurva diubah."""
         if self._curves_backup_qimage is not None:
             self.viewer.set_image(self._curves_backup_qimage, self._curves_backup_scientific_data)
             self.statusBar().showMessage("Kurva direset ke tampilan awal.", 2500)
+            self.log_manager.info(LogModule.CURVE, "Curve adjustment reset to initial state.")
 
     def open_image_information_dialog(self) -> None:
         """Membuka jendela Image Information & Metadata Editor ala Siril FITS Header Editor."""
@@ -1449,14 +1522,22 @@ class MainWindow(QMainWindow):
         self.info_dialog.raise_()
         self.info_dialog.activateWindow()
         dt = time.perf_counter() - t0
-        self.log_manager.info("TOOLS", "Image Information Dibuka", f"Memeriksa metadata '{file_name}' | Total waktu: {dt:.2f}s")
+        self.log_manager.info(
+            LogModule.INPUT,
+            f"Image Information & Metadata Editor opened for '{file_name}'.",
+            details={"filename": file_name, "card_count": len(cards), "duration_ms": round(dt * 1000.0, 2)},
+        )
 
     def _on_metadata_edited(self, key: str, value: str, comment: str) -> None:
         """Handler saat pengguna memodifikasi atau menambah kartu metadata di info dialog."""
         t0 = time.perf_counter()
         self._custom_metadata[key] = (value, comment)
         dt = time.perf_counter() - t0
-        self.log_manager.info("METADATA", "Metadata Diperbarui", f"Kartu '{key}' = '{value}' ({comment}) | Total waktu: {dt:.2f}s")
+        self.log_manager.info(
+            LogModule.INPUT,
+            f"Metadata card updated: {key} = '{value}'.",
+            details={"keyword": key, "value": value, "comment": comment, "duration_ms": round(dt * 1000.0, 2)},
+        )
 
     def show_flat_info_dialog(self) -> None:
         """Menampilkan dialog informasi dan pedoman ilmiah kalibrasi Flat-Field HILALONE."""
@@ -1517,7 +1598,11 @@ class MainWindow(QMainWindow):
 
         theme_name = "Night Vision Red" if self._is_night_vision else "Standard Dark"
         dt_theme = time.perf_counter() - t0
-        self.log_manager.info("THEME", "Pergantian Tema", f"Tema antarmuka beralih ke {theme_name} | Total waktu: {dt_theme:.2f}s")
+        self.log_manager.info(
+            LogModule.DISPLAY,
+            f"Interface theme switched to {theme_name}.",
+            details={"theme": theme_name, "duration_ms": round(dt_theme * 1000.0, 2)},
+        )
         self.statusBar().showMessage(f"Tema antarmuka: {theme_name}", 3000)
 
     def _apply_theme_to_widgets(self, is_night_vision: bool) -> None:
@@ -1730,10 +1815,16 @@ class MainWindow(QMainWindow):
 
         self.viewer.set_negative_view(checked)
         if checked:
-            self.log_manager.info("VIEW", "Mode Tampilan", "Tampilan dialihkan ke Negative View (non-destruktif).")
+            self.log_manager.info(
+                LogModule.VIEWER,
+                "Display mode switched to Negative View (non-destructive display inversion).",
+            )
             self.statusBar().showMessage("Tampilan Negative View aktif (data ilmiah tidak berubah).", 2500)
         else:
-            self.log_manager.info("VIEW", "Mode Tampilan", "Tampilan dikembalikan ke Normal View.")
+            self.log_manager.info(
+                LogModule.VIEWER,
+                "Display mode restored to Normal View.",
+            )
             self.statusBar().showMessage("Tampilan Normal View aktif.", 2500)
 
     def _refresh_image_toolbar_state(self) -> None:
@@ -1828,7 +1919,12 @@ class MainWindow(QMainWindow):
             lambda arr: np.ascontiguousarray(np.rot90(arr, k=-1, axes=(0, 1))),
         )
         dt = time.perf_counter() - t0
-        self.log_manager.info("VIEW", "Rotasi Citra", f"Citra diputar 90° searah jarum jam (CW) | Total waktu: {dt:.2f}s")
+        self.log_manager.info(
+            LogModule.VIEWER,
+            "Image rotated 90° clockwise (CW).",
+            format_duration(duration_s=dt),
+            details={"duration_ms": round(dt * 1000.0, 3)},
+        )
         self.statusBar().showMessage("Citra diputar 90° searah jarum jam (CW).", 2500)
 
     def rotate_image_ccw(self) -> None:
@@ -1842,7 +1938,12 @@ class MainWindow(QMainWindow):
             lambda arr: np.ascontiguousarray(np.rot90(arr, k=1, axes=(0, 1))),
         )
         dt = time.perf_counter() - t0
-        self.log_manager.info("VIEW", "Rotasi Citra", f"Citra diputar 90° berlawanan arah jarum jam (CCW) | Total waktu: {dt:.2f}s")
+        self.log_manager.info(
+            LogModule.VIEWER,
+            "Image rotated 90° counter-clockwise (CCW).",
+            format_duration(duration_s=dt),
+            details={"duration_ms": round(dt * 1000.0, 3)},
+        )
         self.statusBar().showMessage("Citra diputar 90° berlawanan arah jarum jam (CCW).", 2500)
 
     def flip_image_horizontal(self) -> None:
@@ -1856,7 +1957,12 @@ class MainWindow(QMainWindow):
             lambda arr: np.ascontiguousarray(np.flip(arr, axis=1)),
         )
         dt = time.perf_counter() - t0
-        self.log_manager.info("VIEW", "Flip Citra", f"Citra dibalik secara horizontal (Flip Horizontal) | Total waktu: {dt:.2f}s")
+        self.log_manager.info(
+            LogModule.VIEWER,
+            "Image flipped horizontally.",
+            format_duration(duration_s=dt),
+            details={"duration_ms": round(dt * 1000.0, 3)},
+        )
         self.statusBar().showMessage("Citra dibalik secara horizontal (Flip Horizontal).", 2500)
 
     def flip_image_vertical(self) -> None:
@@ -1870,7 +1976,12 @@ class MainWindow(QMainWindow):
             lambda arr: np.ascontiguousarray(np.flip(arr, axis=0)),
         )
         dt = time.perf_counter() - t0
-        self.log_manager.info("VIEW", "Flip Citra", f"Citra dibalik secara vertikal (Flip Vertical) | Total waktu: {dt:.2f}s")
+        self.log_manager.info(
+            LogModule.VIEWER,
+            "Image flipped vertically.",
+            format_duration(duration_s=dt),
+            details={"duration_ms": round(dt * 1000.0, 3)},
+        )
         self.statusBar().showMessage("Citra dibalik secara vertikal (Flip Vertical).", 2500)
 
     def take_quick_snapshot(self) -> Path | None:
@@ -1908,10 +2019,11 @@ class MainWindow(QMainWindow):
 
         self._last_dir = str(candidate_path.parent)
         dt_snap = time.perf_counter() - t0
-        self.log_manager.info(
-            "SNAPSHOT",
-            "Cuplikan Cepat Disimpan",
-            f"{candidate_path.name} | Lokasi: {candidate_path.parent} | Total waktu: {dt_snap:.2f}s",
+        log_output_saved(
+            self.log_manager,
+            candidate_path,
+            product_category="Quick Snapshot PNG",
+            duration_ms=dt_snap * 1000.0,
         )
         self.statusBar().showMessage(f"Snapshot tersimpan: {candidate_path.name}")
         self.stacking_status_label.setText(f"Snapshot cepat tersimpan: {candidate_path.name}")
@@ -2706,11 +2818,20 @@ class MainWindow(QMainWindow):
     def load_video_path(self, path: str | Path) -> bool:
         """Memuat berkas video ke dalam SequenceManager secara *lazy*."""
         t0 = time.perf_counter()
+        p = Path(path)
         try:
-            report = self.sequence_manager.open_video_file(path)
+            report = self.sequence_manager.open_video_file(p)
         except ImageReadError as err:
+            self.log_manager.error(
+                LogModule.INPUT,
+                f"Failed to open video file '{p.name}'.",
+                str(err),
+                exc=err,
+                operation="open_video",
+            )
             self._show_error(str(err))
             return False
+        self.log_manager.set_source_directory(p.parent)
         return self._finalize_sequence_open(report.warnings, elapsed_sec=time.perf_counter() - t0)
 
     def _ser_file_dialog_filter(self) -> str:
@@ -2738,13 +2859,22 @@ class MainWindow(QMainWindow):
     ) -> bool:
         """Memuat berkas SER ke dalam SequenceManager secara *lazy*."""
         t0 = time.perf_counter()
+        p = Path(path)
         try:
             report = self.sequence_manager.open_ser_file(
-                path, endianness_policy=endianness_policy
+                p, endianness_policy=endianness_policy
             )
         except ImageReadError as err:
+            self.log_manager.error(
+                LogModule.INPUT,
+                f"Failed to open SER file '{p.name}'.",
+                str(err),
+                exc=err,
+                operation="open_ser",
+            )
             self._show_error(str(err))
             return False
+        self.log_manager.set_source_directory(p.parent)
         return self._finalize_sequence_open(report.warnings, elapsed_sec=time.perf_counter() - t0)
 
     def _ask_tiff_page(self, path: Path, pages: tuple[TiffPageSummary, ...]) -> int | None:
@@ -2812,9 +2942,19 @@ class MainWindow(QMainWindow):
                 return False
             return self.load_path(path, hdu_index=chosen_hdu)
         except ImageReadError as err:
+            self.log_manager.error(
+                LogModule.INPUT,
+                f"Failed to open image '{path.name}'.",
+                str(err),
+                exc=err,
+                operation="open_single_image",
+            )
             self._show_error(str(err))
             return False
 
+        self.log_manager.clear_active_run_context()
+        self.log_manager.set_source_directory(path.parent)
+        self._curve_applied_in_session = False
         self._last_stacking_result = None
         self._current_file_name = loaded.info.file_name
         self._current_info = loaded.info
@@ -2841,10 +2981,12 @@ class MainWindow(QMainWindow):
 
         # Logging terstruktur & update histogram jika aktif
         dt = time.perf_counter() - t0
-        self.log_manager.info(
-            "INPUT",
-            "Single Image Dibuka",
-            f"{loaded.info.file_name} ({loaded.info.width} × {loaded.info.height} px, {loaded.info.channels or 1} kanal) | Total waktu: {dt:.2f}s",
+        log_image_input_loaded(
+            self.log_manager,
+            loaded.info,
+            input_mode_label="Single Image",
+            frame_count=1,
+            duration_ms=dt * 1000.0,
         )
         if self.histogram_window is not None and self.histogram_window.isVisible():
             self.histogram_window.set_image_data(loaded.scientific_data, loaded.info.file_name)
@@ -2863,11 +3005,20 @@ class MainWindow(QMainWindow):
     def load_folder_sequence(self, folder_path: str | Path, sort_by: str = "natural") -> bool:
         """Memuat seluruh gambar yang didukung dari sebuah folder."""
         t0 = time.perf_counter()
+        folder = Path(folder_path)
         try:
-            report = self.sequence_manager.open_folder(folder_path, sort_by=sort_by)
+            report = self.sequence_manager.open_folder(folder, sort_by=sort_by)
         except ImageReadError as err:
+            self.log_manager.error(
+                LogModule.INPUT,
+                f"Failed to open folder sequence '{folder.name}'.",
+                str(err),
+                exc=err,
+                operation="open_folder_sequence",
+            )
             self._show_error(str(err))
             return False
+        self.log_manager.set_source_directory(folder)
         return self._finalize_sequence_open(report.warnings, elapsed_sec=time.perf_counter() - t0)
 
     def load_sequence_paths(
@@ -2877,14 +3028,26 @@ class MainWindow(QMainWindow):
     ) -> bool:
         """Memuat banyak berkas gambar sekaligus ke dalam SequenceManager."""
         t0 = time.perf_counter()
+        raw_paths = [Path(p) for p in paths]
         try:
-            report = self.sequence_manager.open_files(paths, sort_by=sort_by)
+            report = self.sequence_manager.open_files(raw_paths, sort_by=sort_by)
         except ImageReadError as err:
+            self.log_manager.error(
+                LogModule.INPUT,
+                "Failed to open multiple images sequence.",
+                str(err),
+                exc=err,
+                operation="open_multiple_images",
+            )
             self._show_error(str(err))
             return False
+        if raw_paths:
+            self.log_manager.set_source_directory(raw_paths[0].parent)
         return self._finalize_sequence_open(report.warnings, elapsed_sec=time.perf_counter() - t0)
 
     def _finalize_sequence_open(self, warnings: tuple[str, ...], elapsed_sec: float = 0.0) -> bool:
+        self.log_manager.clear_active_run_context()
+        self._curve_applied_in_session = False
         self._last_stacking_result = None
         self._refresh_sequence_controls()
         self._refresh_processing_controls()
@@ -2899,13 +3062,24 @@ class MainWindow(QMainWindow):
             self.panel_b.populate_sequence(self.sequence_manager.entries)
             self.panel_b.set_active_index(target_idx)
 
-        # Logging terstruktur
+        # Logging terstruktur input + validasi sequence
         mode_str = self._format_mode_text()
-        self.log_manager.info(
-            "INPUT",
-            "Sequence Berhasil Dimuat",
-            f"Mode: {mode_str} | Total: {self.sequence_manager.frame_count} frame | "
-            f"Kompatibel: {self.sequence_manager.compatibility_report.compatible_count} | Total waktu: {elapsed_sec:.2f}s",
+        entries = self.sequence_manager.entries
+        ref_info = entries[target_idx].info if 0 <= target_idx < len(entries) else None
+        if ref_info is not None:
+            log_image_input_loaded(
+                self.log_manager,
+                ref_info,
+                input_mode_label=mode_str,
+                frame_count=self.sequence_manager.frame_count,
+                duration_ms=elapsed_sec * 1000.0,
+            )
+        log_sequence_validation_report(
+            self.log_manager,
+            self.sequence_manager.compatibility_report,
+            entries,
+            input_mode=self.sequence_manager.input_mode,
+            duration_ms=elapsed_sec * 1000.0,
         )
 
         self.select_sequence_frame(target_idx, show_error_dialog=False)
@@ -3110,7 +3284,14 @@ class MainWindow(QMainWindow):
             self.histogram_window.set_image_data(None, "Tidak ada gambar")
 
         dt = time.perf_counter() - t0
-        self.log_manager.info("INPUT", "Citra Ditutup", f"Ruang kerja telah dibersihkan | Total waktu: {dt:.2f}s")
+        self.log_manager.set_source_directory(None)
+        self.log_manager.clear_active_run_context()
+        self.log_manager.info(
+            LogModule.INPUT,
+            "Image closed and workspace cleared.",
+            format_duration(duration_s=dt),
+            details={"duration_ms": round(dt * 1000.0, 3)},
+        )
 
         if hasattr(self, "state_manager"):
             self.state_manager.transition_to(ProcessingState.IDLE)
@@ -3715,6 +3896,7 @@ class MainWindow(QMainWindow):
             self.clear_master_flat()
             return False
 
+        t0 = time.perf_counter()
         p = Path(path)
         try:
             loaded_flat = load_master_flat_auto(
@@ -3735,10 +3917,22 @@ class MainWindow(QMainWindow):
                 return False
             return self.set_master_flat_path(p, hdu_index=chosen_hdu)
         except (StackingError, ImageReadError) as err:
+            self.log_manager.error(
+                LogModule.FLAT,
+                f"Failed to load Master Flat '{p.name}'.",
+                str(err),
+                exc=err,
+                operation="load_master_flat",
+                suggested_action="Pastikan berkas Master Flat memiliki pencahayaan positif dan format yang didukung.",
+            )
             self._show_error(str(err))
             return False
 
-        self._apply_loaded_master_flat(loaded_flat, primary_path=p)
+        self._apply_loaded_master_flat(
+            loaded_flat,
+            primary_path=p,
+            duration_ms=(time.perf_counter() - t0) * 1000.0,
+        )
         return True
 
     def set_master_flat_sequence(
@@ -3749,6 +3943,7 @@ class MainWindow(QMainWindow):
         endianness_policy: str = "siril_default",
     ) -> bool:
         """Membuat dan menetapkan Master Flat dari sequence frame flat (Multiple Images, Folder, Video, SER)."""
+        t0 = time.perf_counter()
         try:
             loaded_flat = load_master_flat_from_sequence(
                 source,
@@ -3756,11 +3951,23 @@ class MainWindow(QMainWindow):
                 endianness_policy=endianness_policy,
             )
         except (StackingError, ImageReadError) as err:
+            self.log_manager.error(
+                LogModule.FLAT,
+                "Failed to generate Master Flat from sequence.",
+                str(err),
+                exc=err,
+                operation="load_master_flat_sequence",
+                suggested_action="Pastikan seluruh frame di dalam sequence flat berukuran seragam dan memiliki pencahayaan homogen.",
+            )
             self._show_error(str(err))
             return False
 
         primary = loaded_flat.source_paths[0] if loaded_flat.source_paths else None
-        self._apply_loaded_master_flat(loaded_flat, primary_path=primary)
+        self._apply_loaded_master_flat(
+            loaded_flat,
+            primary_path=primary,
+            duration_ms=(time.perf_counter() - t0) * 1000.0,
+        )
         return True
 
     def _apply_loaded_master_flat(
@@ -3768,6 +3975,7 @@ class MainWindow(QMainWindow):
         loaded_flat: LoadedMasterFlat,
         *,
         primary_path: Path | None = None,
+        duration_ms: float = 0.0,
     ) -> None:
         self._loaded_master_flat = loaded_flat
         self._master_flat_path = primary_path
@@ -3780,6 +3988,15 @@ class MainWindow(QMainWindow):
         self.clear_flat_button.setEnabled(not is_running)
         self._refresh_processing_controls()
 
+        compat = self._evaluate_current_flat_compatibility()
+        log_master_flat_prepared(
+            self.log_manager,
+            loaded_flat,
+            compat=compat,
+            light_frame_count=self.sequence_manager.frame_count,
+            duration_ms=duration_ms,
+        )
+
         if loaded_flat.warnings:
             self._show_warning(
                 "Peringatan Master Flat:\n\n" + "\n".join(f"• {w}" for w in loaded_flat.warnings)
@@ -3791,6 +4008,10 @@ class MainWindow(QMainWindow):
             self._show_error("Belum ada Master Flat yang dipilih untuk dipratinjau.")
             return False
         self.viewer.set_image(self._loaded_master_flat.preview)
+        self.log_manager.info(
+            LogModule.DISPLAY,
+            f"Displaying Master Flat preview: {self._loaded_master_flat.source_description}",
+        )
         self.statusBar().showMessage(
             f"Preview Master Flat: {self._loaded_master_flat.source_description}  |  "
             f"{self._loaded_master_flat.width} × {self._loaded_master_flat.height} px  |  "
@@ -3814,6 +4035,17 @@ class MainWindow(QMainWindow):
         self.stacking_status_label.setText("Menjalankan Flat Calibration secara langsung...")
         self.statusBar().showMessage("Menerapkan koreksi Master Flat...")
 
+        self.log_manager.section("FLAT FIELD CALIBRATION", module=LogModule.CALIBRATION)
+        self.log_manager.info(
+            LogModule.CALIBRATION,
+            "Flat Calibration: ENABLED.",
+            details={
+                "light_frames": self.sequence_manager.frame_count,
+                "flat_frames": self._loaded_master_flat.frame_count,
+                "flat_source": self._loaded_master_flat.source_description,
+            },
+        )
+
         t0 = time.perf_counter()
         try:
             from PySide6.QtCore import QCoreApplication
@@ -3824,6 +4056,13 @@ class MainWindow(QMainWindow):
                 pct = int(round(100.0 * cur / max(1, tot)))
                 self.stacking_progress_bar.setValue(pct)
                 self.stacking_status_label.setText(msg)
+                self.log_manager.progress(
+                    LogModule.CALIBRATION,
+                    cur,
+                    tot,
+                    f"{pct}% completed ({cur}/{tot} light frames calibrated).",
+                    operation="flat_calibration",
+                )
                 QCoreApplication.processEvents()
 
             calibrated_frames, report = run_flat_calibration_on_sequence(
@@ -3840,9 +4079,15 @@ class MainWindow(QMainWindow):
                 f"({report.normalization_method})."
             )
             self.log_manager.success(
-                "FLAT",
-                "Kalibrasi Flat Selesai",
-                f"{len(calibrated_frames)} frame dikalibrasi ({report.normalization_method}) | Total waktu: {dt_flat:.2f}s",
+                LogModule.CALIBRATION,
+                "Flat Calibration completed successfully.",
+                f"{len(calibrated_frames)} frames calibrated ({report.normalization_method}) | {format_duration(duration_s=dt_flat)}",
+                details={
+                    "calibrated_frames": len(calibrated_frames),
+                    "normalization": report.normalization_method,
+                    "invalid_pixels": report.invalid_pixel_count,
+                    "duration_ms": round(dt_flat * 1000.0, 3),
+                },
             )
             if calibrated_frames:
                 prev = array_to_preview_qimage(calibrated_frames[0])
@@ -3853,6 +4098,13 @@ class MainWindow(QMainWindow):
             return True
         except Exception as exc:
             self.stacking_status_label.setText(f"Kalibrasi Flat gagal: {exc}")
+            self.log_manager.error(
+                LogModule.CALIBRATION,
+                f"Flat Calibration failed: {exc}",
+                exc=exc,
+                operation="flat_calibration",
+                suggested_action="Periksa kesesuaian dimensi dan jumlah kanal antara Light frame dan Master Flat.",
+            )
             self._show_error(f"Gagal menjalankan Kalibrasi Flat: {exc}")
             return False
         finally:
@@ -3861,12 +4113,15 @@ class MainWindow(QMainWindow):
 
     def clear_master_flat(self) -> None:
         """Menghapus pilihan berkas/sequence Master Flat."""
+        had_flat = self._loaded_master_flat is not None
         self._loaded_master_flat = None
         self._master_flat_path = None
         self.flat_file_label.setText("Master Flat: Tidak digunakan")
         self.preview_flat_button.setEnabled(False)
         self.clear_flat_button.setEnabled(False)
         self._refresh_processing_controls()
+        if had_flat:
+            self.log_manager.info(LogModule.FLAT, "Master Flat selection cleared by user.")
 
     def _evaluate_current_flat_compatibility(self) -> FlatCompatibilityCheckResult | None:
         """Memeriksa kompatibilitas Master Flat yang sedang dimuat terhadap sequence light frame aktif."""
@@ -4097,12 +4352,26 @@ class MainWindow(QMainWindow):
                 break
         self._update_displayed_preview()
         self._update_processing_accordion_summary()
+        if self.viewer.has_image():
+            self.log_manager.info(
+                LogModule.DISPLAY,
+                f"Preview mode: {self._preview_mode.value}.",
+                details={"preview_mode": self._preview_mode.value},
+            )
+            self.log_manager.success(LogModule.DISPLAY, "Preview updated.")
 
     def _on_toggle_before_after_clicked(self, checked: bool) -> None:
         self._is_showing_before = checked
         btn_txt = "Sedang Menampilkan: SEBELUM Proses" if checked else "Before / After"
         self.toggle_before_after_button.setText(btn_txt)
         self._update_displayed_preview()
+        if self.viewer.has_image():
+            view_state = "BEFORE (Original)" if checked else f"AFTER ({self._preview_mode.value})"
+            self.log_manager.info(
+                LogModule.DISPLAY,
+                f"Before/After selection: {view_state}.",
+                details={"before_after": "BEFORE" if checked else "AFTER", "active_mode": self._preview_mode.value},
+            )
 
     def _update_displayed_preview(self) -> None:
         if not self.viewer.has_image():
@@ -4601,6 +4870,30 @@ class MainWindow(QMainWindow):
         profile = self.selected_stacking_profile()
         master_flat = self._loaded_master_flat if self.flat_checkbox.isChecked() else None
 
+        run_rec = self.log_manager.start_processing_run(
+            input_summary={
+                "mode": self.sequence_manager.input_mode.value,
+                "total_frames": self.sequence_manager.frame_count,
+            },
+            processing_config={
+                "profile": profile.value,
+                "flat_enabled": bool(master_flat is not None),
+            },
+        )
+        self._active_stacking_run_id = run_rec.run_id
+        self.log_manager.section("IMAGE STACKING", module=LogModule.STACKING, run_id=run_rec.run_id)
+        self.log_manager.info(
+            LogModule.STACKING,
+            f"Starting image integration | Profile: {profile.value}.",
+            details={
+                "run_id": run_rec.run_id,
+                "profile": profile.value,
+                "input_frames": self.sequence_manager.frame_count,
+                "flat_enabled": bool(master_flat is not None),
+            },
+            run_id=run_rec.run_id,
+        )
+
         worker = StackingWorker(
             self.sequence_manager,
             profile,
@@ -4609,6 +4902,8 @@ class MainWindow(QMainWindow):
             allow_exclude_incompatible_and_error=allow_exclude_incompatible_and_error,
             check_position_stability=False,
             confirm_proceed_with_shift_risk=True,
+            run_id=run_rec.run_id,
+            log_manager=self.log_manager,
             parent=self,
         )
         self._cancel_requested_by_ui = False
@@ -4650,6 +4945,11 @@ class MainWindow(QMainWindow):
         self.state_manager.transition_to(ProcessingState.CANCELLING)
         self.cancel_stacking_button.setEnabled(False)
         self.stacking_status_label.setText("Membatalkan proses stacking secara aman...")
+        self.log_manager.info(
+            LogModule.SESSION,
+            "Cancellation requested by user.",
+            run_id=self._active_stacking_run_id,
+        )
         if self._stacking_worker is not None:
             self._stacking_worker.request_cancel()
 
@@ -4675,6 +4975,7 @@ class MainWindow(QMainWindow):
             prof_str = result_obj.profile_config.profile.value
             algo_str = result_obj.effective_algorithm.value
             dtype_str = str(result_obj.stacked_scientific_data.dtype)
+            out_h, out_w = result_obj.stacked_scientific_data.shape[:2]
             self.stacking_progress_bar.setVisible(True)
             self.stacking_progress_bar.setValue(100)
             self.stacking_status_label.setText(
@@ -4683,10 +4984,21 @@ class MainWindow(QMainWindow):
             )
             dt_stack = time.perf_counter() - getattr(self, "_stacking_start_time", time.perf_counter())
             self.log_manager.success(
-                "STACKING",
-                "Stacking Selesai",
-                f"{result_obj.stacked_frame_count} frame digabungkan ({prof_str}, {algo_str}) | Total waktu: {dt_stack:.2f}s. Hasil siap disimpan melalui Save Result.",
+                LogModule.STACKING,
+                "Image integration completed.",
+                f"{result_obj.stacked_frame_count} frames integrated ({prof_str}, {algo_str}) | Output: {out_w}×{out_h} px {dtype_str} | {format_duration(duration_s=dt_stack)}",
+                details={
+                    "profile": prof_str,
+                    "method": algo_str,
+                    "frames_processed": result_obj.stacked_frame_count,
+                    "frames_excluded": len(result_obj.excluded_frames),
+                    "output_dtype": dtype_str,
+                    "output_dimensions": f"{out_w}×{out_h} px",
+                    "duration_ms": round(dt_stack * 1000.0, 3),
+                },
+                run_id=self._active_stacking_run_id,
             )
+            self.log_manager.finish_processing_run("SUCCESS", run_id=self._active_stacking_run_id)
             if result_obj.preview is not None and not result_obj.preview.isNull():
                 self.viewer.set_image(
                     result_obj.preview,
@@ -4710,6 +5022,13 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.state_manager.transition_to(ProcessingState.FAILED)
             self.stacking_status_label.setText(f"Gagal menampilkan hasil: {exc}")
+            self.log_manager.error(
+                LogModule.STACKING,
+                f"Failed to finalize stacking result: {exc}",
+                exc=exc,
+                run_id=self._active_stacking_run_id,
+            )
+            self.log_manager.finish_processing_run("FAILED", run_id=self._active_stacking_run_id)
             self._show_error(f"Gagal menampilkan hasil stacking: {exc}")
         finally:
             self._set_input_controls_enabled(True)
@@ -4722,6 +5041,18 @@ class MainWindow(QMainWindow):
             self.stacking_progress_bar.setValue(0)
             self.stacking_progress_bar.setVisible(False)
             self.stacking_status_label.setText(f"Dibatalkan: {message}")
+            self.log_manager.info(
+                LogModule.STACKING,
+                "Processing stopped safely.",
+                run_id=self._active_stacking_run_id,
+            )
+            self.log_manager.cancelled(
+                LogModule.SESSION,
+                "Processing cancelled by user.",
+                message,
+                run_id=self._active_stacking_run_id,
+            )
+            self.log_manager.finish_processing_run("CANCELLED", run_id=self._active_stacking_run_id)
             self.statusBar().showMessage("Proses stacking dibatalkan oleh pengguna.")
         finally:
             self._set_input_controls_enabled(True)
@@ -4751,6 +5082,14 @@ class MainWindow(QMainWindow):
             self.stacking_progress_bar.setValue(0)
             self.stacking_progress_bar.setVisible(False)
             self.stacking_status_label.setText(f"Gagal: {message}")
+            self.log_manager.error(
+                LogModule.STACKING,
+                "Image integration failed.",
+                f"Reason: {message}",
+                operation="stacking",
+                run_id=self._active_stacking_run_id,
+            )
+            self.log_manager.finish_processing_run("FAILED", run_id=self._active_stacking_run_id)
             self.statusBar().showMessage("Proses stacking gagal.")
             self._show_error(message)
         finally:
@@ -4817,15 +5156,32 @@ class MainWindow(QMainWindow):
                 write_json_report=True,
             )
         except OutputWriteError as err:
+            self.log_manager.error(
+                LogModule.OUTPUT,
+                f"Failed to write stacking output to '{Path(output_path).name}'.",
+                str(err),
+                exc=err,
+                operation="save_stacking_result",
+            )
             self._show_error(str(err))
             return None
 
         self._last_dir = str(saved_path.parent)
         dt_save = time.perf_counter() - t0
-        self.log_manager.success(
-            "OUTPUT",
-            "Hasil Stacking Tersimpan",
-            f"{saved_path.name} | Jalur: {saved_path} | Total waktu: {dt_save:.2f}s",
+        ext_low = saved_path.suffix.lower()
+        if ext_low in (".fits", ".fit", ".fts"):
+            prod_cat = "Scientific Master FITS (Stacked Linear)"
+        elif ext_low in (".tif", ".tiff"):
+            prod_cat = "Scientific TIFF Export (Stacked Linear)"
+        else:
+            prod_cat = "Display Preview PNG (Stacked)"
+        log_output_saved(
+            self.log_manager,
+            saved_path,
+            product_category=prod_cat,
+            data_array=self._last_stacking_result.stacked_scientific_data,
+            duration_ms=dt_save * 1000.0,
+            json_report_path=_json_path,
         )
         self.stacking_status_label.setText(f"Hasil stacking disimpan ke: {saved_path.name}")
         self.statusBar().showMessage(f"Hasil stacking tersimpan: {saved_path}")
@@ -4904,6 +5260,41 @@ class MainWindow(QMainWindow):
 
         master_flat = self._loaded_master_flat if self.flat_checkbox.isChecked() else None
 
+        run_rec = self.log_manager.start_processing_run(
+            input_summary={
+                "mode": mode.value,
+                "total_frames": total,
+                "excluded_by_user": len(excluded_unselected),
+            },
+            processing_config={
+                "profile": conf.profile.value,
+                "flat_enabled": bool(master_flat is not None),
+                "background_method": conf.background_config.method.value,
+                "clahe_enabled": conf.enhancement_config.enabled,
+                "clahe_clip_limit": conf.enhancement_config.clip_limit,
+                "stretch_method": conf.histogram_config.method.value,
+            },
+        )
+        self._active_pipeline_run_id = run_rec.run_id
+        self._active_pipeline_user_excluded = len(excluded_unselected)
+
+        self.log_manager.section("AUTOMATED PROCESSING PIPELINE", module=LogModule.SESSION, run_id=run_rec.run_id)
+        self.log_manager.info(
+            LogModule.SESSION,
+            f"Starting automated processing | Run ID: {run_rec.run_id} | Profile: {conf.profile.value}.",
+            details={
+                "run_id": run_rec.run_id,
+                "profile": conf.profile.value,
+                "input_mode": mode.value,
+                "input_frames": total,
+                "flat_calibration": "ENABLED" if master_flat is not None else "DISABLED",
+                "background_method": conf.background_config.method.value,
+                "clahe_enabled": conf.enhancement_config.enabled,
+                "stretch_method": conf.histogram_config.method.value,
+            },
+            run_id=run_rec.run_id,
+        )
+
         worker = PipelineWorker(
             self.sequence_manager,
             config=conf,
@@ -4911,6 +5302,8 @@ class MainWindow(QMainWindow):
             excluded_frame_indices=excluded_unselected if excluded_unselected else None,
             allow_exclude_incompatible_and_error=allow_exclude_invalid,
             confirm_proceed_with_shift_risk=True,
+            run_id=run_rec.run_id,
+            log_manager=self.log_manager,
             parent=self,
         )
         self._cancel_requested_by_ui = False
@@ -4952,6 +5345,11 @@ class MainWindow(QMainWindow):
         self.state_manager.transition_to(ProcessingState.CANCELLING)
         self.cancel_pipeline_button.setEnabled(False)
         self.stacking_status_label.setText("Membatalkan pemrosesan otomatis secara aman...")
+        self.log_manager.info(
+            LogModule.SESSION,
+            "Cancellation requested by user.",
+            run_id=self._active_pipeline_run_id,
+        )
         if self._pipeline_worker is not None:
             self._pipeline_worker.request_cancel()
 
@@ -5020,25 +5418,43 @@ class MainWindow(QMainWindow):
                     f"{self._current_file_name or 'Citra'} (Hasil {result_obj.profile.value})",
                 )
 
-            elapsed_sec = getattr(result_obj, "total_elapsed_seconds", 0.0)
-            if hasattr(result_obj, "stage_records"):
-                for stage_rec in result_obj.stage_records:
-                    if stage_rec.status.value != "SKIPPED":
-                        s_sec = (stage_rec.duration_ms or 0.0) / 1000.0
-                        self.log_manager.info(
-                            "STAGE",
-                            f"{stage_rec.stage.value}",
-                            f"{stage_rec.summary} | Waktu: {s_sec:.2f}s",
-                        )
-            self.log_manager.success(
-                "PIPELINE",
-                "Pemrosesan Otomatis Selesai",
-                f"Profil: {result_obj.profile.value} | Total waktu: {elapsed_sec:.2f}s. Gunakan menu Save Result untuk menyimpan.",
-            )
+            wall_elapsed = time.perf_counter() - getattr(self, "_pipeline_start_time", time.perf_counter())
+            elapsed_sec = getattr(result_obj, "total_elapsed_seconds", 0.0) or wall_elapsed
+            run_id = self._active_pipeline_run_id or self.log_manager.current_run_id
+
+            gen_files: list[str] = []
             export_rep = getattr(result_obj, "export_report", None)
             if export_rep is not None and hasattr(export_rep, "generated_files"):
                 for out_f in export_rep.generated_files:
-                    self.log_manager.info("OUTPUT", f"File Tersimpan ({out_f.stage})", f"{out_f.path} | Waktu: 0.01s")
+                    gen_files.append(str(out_f.path))
+                    self.log_manager.info(
+                        LogModule.OUTPUT,
+                        f"File saved ({out_f.stage}): {out_f.path}",
+                        run_id=run_id,
+                    )
+
+            log_pipeline_execution_details(
+                self.log_manager,
+                result_obj,
+                run_id=run_id,
+                total_input_frames=max(1, self.sequence_manager.frame_count),
+                user_excluded_count=self._active_pipeline_user_excluded,
+                curve_applied=self._curve_applied_in_session,
+                output_files=tuple(gen_files),
+                wall_elapsed_sec=elapsed_sec,
+            )
+            self.log_manager.success(
+                LogModule.SESSION,
+                "Automated processing completed successfully.",
+                f"Run ID: {run_id} | Profile: {result_obj.profile.value} | {format_duration(duration_s=elapsed_sec)}",
+                details={
+                    "run_id": run_id,
+                    "profile": result_obj.profile.value,
+                    "duration_ms": round(elapsed_sec * 1000.0, 3),
+                },
+                run_id=run_id,
+            )
+            self.log_manager.finish_processing_run("SUCCESS", run_id=run_id, output_files=gen_files)
 
             if hasattr(self, "image_action_toolbar"):
                 self._refresh_image_toolbar_state()
@@ -5049,6 +5465,13 @@ class MainWindow(QMainWindow):
             self._last_pipeline_result = None
             self.state_manager.transition_to(ProcessingState.FAILED)
             self.stacking_status_label.setText(f"Gagal menampilkan hasil: {exc}")
+            self.log_manager.error(
+                LogModule.SESSION,
+                f"Failed to finalize pipeline result: {exc}",
+                exc=exc,
+                run_id=self._active_pipeline_run_id,
+            )
+            self.log_manager.finish_processing_run("FAILED", run_id=self._active_pipeline_run_id)
             self._show_error(f"Gagal menampilkan hasil pemrosesan: {exc}")
         finally:
             self._set_input_controls_enabled(True)
@@ -5063,6 +5486,19 @@ class MainWindow(QMainWindow):
             self.stacking_progress_bar.setValue(0)
             self.stacking_progress_bar.setVisible(False)
             self.stacking_status_label.setText(f"Dibatalkan: {message}")
+            run_id = self._active_pipeline_run_id or self.log_manager.current_run_id
+            self.log_manager.info(
+                LogModule.SESSION,
+                "Processing stopped safely.",
+                run_id=run_id,
+            )
+            self.log_manager.cancelled(
+                LogModule.SESSION,
+                "Processing cancelled by user.",
+                message,
+                run_id=run_id,
+            )
+            self.log_manager.finish_processing_run("CANCELLED", run_id=run_id)
             self.statusBar().showMessage("Pemrosesan otomatis dibatalkan.")
         finally:
             self._set_input_controls_enabled(True)
@@ -5074,6 +5510,15 @@ class MainWindow(QMainWindow):
             self.stacking_progress_bar.setValue(0)
             self.stacking_progress_bar.setVisible(False)
             self.stacking_status_label.setText(f"Gagal: {message}")
+            run_id = self._active_pipeline_run_id or self.log_manager.current_run_id
+            self.log_manager.error(
+                LogModule.SESSION,
+                "Automated processing pipeline failed.",
+                f"Reason: {message}",
+                operation="automated_pipeline",
+                run_id=run_id,
+            )
+            self.log_manager.finish_processing_run("FAILED", run_id=run_id)
             self.statusBar().showMessage("Pemrosesan otomatis gagal.")
             self._show_error(message)
         finally:
@@ -5173,6 +5618,7 @@ class MainWindow(QMainWindow):
         save_target: str = "LINEAR",
     ) -> Path | None:
         """Menyimpan hasil pemrosesan otomatis ke disk dengan jaminan anti-overwrite."""
+        t0 = time.perf_counter()
         if self._last_pipeline_result is None:
             if self._last_stacking_result is not None:
                 return self.save_stacking_result_to_path(output_path)
@@ -5194,8 +5640,39 @@ class MainWindow(QMainWindow):
                 write_json_report=True,
             )
         except OutputWriteError as err:
+            self.log_manager.error(
+                LogModule.OUTPUT,
+                f"Failed to write output file '{Path(output_path).name}'.",
+                str(err),
+                exc=err,
+                operation="save_pipeline_result",
+            )
             self._show_error(str(err))
             return None
+
+        dt_save = (time.perf_counter() - t0) * 1000.0
+        ext_low = saved_path.suffix.lower()
+        if save_target == "ENHANCED":
+            prod_cat = "Derived Enhanced FITS/TIFF"
+            arr_ref = self._last_pipeline_result.enhanced_result
+        elif save_target == "DISPLAY" or ext_low == ".png":
+            prod_cat = "Display Preview PNG"
+            arr_ref = self._last_pipeline_result.display_result
+        elif ext_low in (".tif", ".tiff"):
+            prod_cat = "Scientific TIFF Export"
+            arr_ref = self._last_pipeline_result.linear_result
+        else:
+            prod_cat = "Scientific Master FITS"
+            arr_ref = self._last_pipeline_result.linear_result
+
+        log_output_saved(
+            self.log_manager,
+            saved_path,
+            product_category=prod_cat,
+            data_array=arr_ref,
+            duration_ms=dt_save,
+            json_report_path=_json_path,
+        )
 
         self._last_dir = str(saved_path.parent)
         self.stacking_status_label.setText(f"Hasil disimpan ke: {saved_path.name}")

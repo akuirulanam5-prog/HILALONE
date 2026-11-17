@@ -84,8 +84,8 @@ def get_user_config_path() -> Path:
 
 
 def get_user_log_dir() -> Path:
-    """Mengembalikan direktori penyimpanan log diagnostik & crash HILALONE."""
-    return get_user_data_dir() / "logs"
+    """Mengembalikan direktori penyimpanan log permanen & diagnostik HILALONE (`%LOCALAPPDATA%\\HILALONE\\Logs`)."""
+    return get_user_data_dir() / "Logs"
 
 
 def get_resource_path(relative_path: str | Path) -> Path:

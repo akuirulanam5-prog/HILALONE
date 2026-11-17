@@ -50,13 +50,17 @@ def _enable_diagnostic_console() -> None:
 
 
 def _setup_logging_and_crash_hooks(diagnostic_mode: bool = False) -> Path | None:
-    """Mengonfigurasi log runtime & crash handler di folder data pengguna Windows."""
+    """Mengonfigurasi log runtime & crash handler di folder data pengguna Windows (`%LOCALAPPDATA%\\HILALONE\\Logs`)."""
     log_dir: Path | None = None
     try:
         log_dir = get_user_log_dir()
-        log_dir.mkdir(parents=True, exist_ok=True)
-        runtime_log = log_dir / "hilalone.log"
-        crash_log = log_dir / "crash.log"
+        app_log_dir = log_dir / "application"
+        diag_log_dir = log_dir / "diagnostics"
+        app_log_dir.mkdir(parents=True, exist_ok=True)
+        diag_log_dir.mkdir(parents=True, exist_ok=True)
+
+        runtime_log = app_log_dir / "application_latest.log"
+        crash_log = diag_log_dir / "crash.log"
 
         handlers: list[logging.Handler] = [
             logging.FileHandler(runtime_log, mode="a", encoding="utf-8"),
@@ -81,6 +85,16 @@ def _setup_logging_and_crash_hooks(diagnostic_mode: bool = False) -> Path | None
         def _excepthook(exc_type: type[BaseException], exc_val: BaseException, exc_tb: object) -> None:
             tb_text = "".join(traceback.format_exception(exc_type, exc_val, exc_tb))
             logging.critical("Uncaught exception:\n%s", tb_text)
+            try:
+                from hilalone.core.logging import LogModule, get_logger
+
+                get_logger().critical(
+                    LogModule.ERROR,
+                    f"Unhandled exception: {exc_type.__name__}: {exc_val}",
+                    exc=exc_val,
+                )
+            except Exception:
+                pass
             try:
                 with open(crash_log, "a", encoding="utf-8") as cf:
                     cf.write("\n=== HILALONE UNCAUGHT EXCEPTION ===\n")

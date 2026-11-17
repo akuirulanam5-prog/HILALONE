@@ -6,11 +6,12 @@ CLAHE, dan Histogram Transformation) berlangsung di latar belakang.
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
+from hilalone.core.logging import LogModule
 from hilalone.input_manager.image_reader import ImageInfo
 from hilalone.input_manager.sequence_manager import SequenceManager
 from hilalone.processing.processing_models import (
@@ -30,6 +31,9 @@ from hilalone.processing.stacking.models import (
     StackingConfirmationRequiredError,
     StackingError,
 )
+
+if TYPE_CHECKING:
+    from hilalone.core.logging import HilaloneLogger
 
 
 class PipelineWorker(QThread):
@@ -53,6 +57,8 @@ class PipelineWorker(QThread):
         excluded_frame_indices: set[int] | None = None,
         allow_exclude_incompatible_and_error: bool = False,
         confirm_proceed_with_shift_risk: bool = True,
+        run_id: str | None = None,
+        log_manager: HilaloneLogger | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -64,6 +70,8 @@ class PipelineWorker(QThread):
         self.excluded_frame_indices = set(excluded_frame_indices) if excluded_frame_indices else None
         self.allow_exclude_incompatible_and_error = allow_exclude_incompatible_and_error
         self.confirm_proceed_with_shift_risk = confirm_proceed_with_shift_risk
+        self.run_id = run_id
+        self.log_manager = log_manager
         self._is_cancelled = False
 
     def request_cancel(self) -> None:
@@ -115,6 +123,16 @@ class PipelineWorker(QThread):
             step_frac = float(step) / float(max(1, total_steps))
             overall_pct = int(min(99, prior_pct + cur_weight * step_frac))
             self.progress_updated.emit(overall_pct, msg)
+
+            if self.log_manager is not None:
+                self.log_manager.progress(
+                    LogModule.STACKING if stage == PipelineStage.STACKING else LogModule.SESSION,
+                    overall_pct,
+                    100,
+                    f"{overall_pct}% completed — {msg}",
+                    operation="pipeline",
+                    run_id=self.run_id,
+                )
 
         try:
             if self.sequence_manager is not None and self.sequence_manager.frame_count > 1:
