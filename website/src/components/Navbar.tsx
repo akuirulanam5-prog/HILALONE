@@ -9,12 +9,12 @@ interface NavItem {
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
-  { href: "#tentang", id: "tentang", label: "Tentang" },
   { href: "#fitur", id: "fitur", label: "Fitur" },
-  { href: "#antarmuka", id: "antarmuka", label: "Antarmuka" },
   { href: "#alur-kerja", id: "alur-kerja", label: "Alur Kerja" },
-  { href: "#roadmap", id: "roadmap", label: "Roadmap" },
+  { href: "#antarmuka", id: "antarmuka", label: "Antarmuka" },
+  { href: "#tentang", id: "tentang", label: "Tentang" },
   { href: "#spesifikasi", id: "spesifikasi", label: "Spesifikasi" },
+  { href: "#roadmap", id: "roadmap", label: "Roadmap" },
   { href: "#faq", id: "faq", label: "FAQ" },
 ];
 
@@ -26,7 +26,7 @@ export function Navbar() {
   const [isWide, setIsWide] = useState(true);
   const [isMeasuring, setIsMeasuring] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeId, setActiveId] = useState<string>("tentang");
+  const [activeId, setActiveId] = useState<string>("fitur");
 
   // Pantau seksi aktif untuk penanda lokasi saat scroll
   useEffect(() => {

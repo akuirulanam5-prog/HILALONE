@@ -1,4 +1,4 @@
-import { Compass, Download, Layers, Moon, ShieldCheck, Telescope } from "lucide-react";
+import { Compass, Download, FileCheck2, Layers, ShieldCheck, Telescope } from "lucide-react";
 import { HeroVisualShowcase } from "../components/HeroVisualShowcase";
 import { HERO_HIGHLIGHTS, HERO_PILLARS } from "../data/hilaloneData";
 import { siteConfig } from "../data/siteConfig";
@@ -6,18 +6,18 @@ import { siteConfig } from "../data/siteConfig";
 const PILLAR_ICONS = {
   readonly: ShieldCheck,
   "no-align": Layers,
-  "night-updater": Moon,
+  "split-output": FileCheck2,
 } as const;
 
 export function HeroSection() {
   return (
     <section id="beranda" className="hero">
-      <div className="container">
-        <div className="hero-frame">
+      <div className="hero-band">
+        <div className="container">
           <div className="hero__grid">
             <div className="hero__copy">
-              <div className="hero__badge">
-                <Telescope size={14} aria-hidden="true" />
+              <div className="hero__meta">
+                <Telescope size={15} aria-hidden="true" />
                 <span>
                   {siteConfig.appName} v{siteConfig.version} · {siteConfig.platform}
                 </span>
@@ -29,9 +29,9 @@ export function HeroSection() {
               </h1>
 
               <p className="hero__desc">
-                HILALONE adalah perangkat lunak desktop untuk membaca, memvalidasi, dan
-                meningkatkan citra astronomi melalui alur kerja pemrosesan yang terstruktur,
-                transparan, dan menjaga integritas data ilmiah.
+                Perangkat lunak desktop Windows berbasis Python dan PySide6 untuk membaca,
+                memvalidasi, menumpuk, serta menampilkan citra pengamatan hilal secara terstruktur
+                dan menjaga keaslian sinyal ilmiah.
               </p>
 
               <blockquote className="hero__philosophy">
@@ -43,9 +43,9 @@ export function HeroSection() {
                   <Download size={18} aria-hidden="true" />
                   <span>Unduh HILALONE v{siteConfig.version}</span>
                 </a>
-                <a href="#fitur" className="btn btn--secondary">
+                <a href="#antarmuka" className="btn btn--navy-outline">
                   <Compass size={18} aria-hidden="true" />
-                  <span>Jelajahi Fitur</span>
+                  <span>Lihat Antarmuka &amp; Fitur</span>
                 </a>
               </div>
 
@@ -64,24 +64,26 @@ export function HeroSection() {
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Strip 3 pilar inti di bawah hero (Blok 1 referensi layout) */}
-        <ul className="hero-pillars" aria-label="Pilar utama desain ilmiah">
-          {HERO_PILLARS.map((pillar) => {
-            const IconComp = PILLAR_ICONS[pillar.id];
-            return (
-              <li key={pillar.id} className="hero-pillar">
-                <div className="hero-pillar__icon" aria-hidden="true">
-                  <IconComp size={18} />
-                </div>
-                <div className="hero-pillar__body">
-                  <h2 className="hero-pillar__title">{pillar.title}</h2>
+      {/* Strip 3 pilar inti pada ruang baca terang tepat di bawah Hero */}
+      <div className="pillars-band">
+        <div className="container">
+          <ul className="hero-pillars" aria-label="Pilar utama desain ilmiah">
+            {HERO_PILLARS.map((pillar) => {
+              const IconComp = PILLAR_ICONS[pillar.id];
+              return (
+                <li key={pillar.id} className="hero-pillar">
+                  <div className="hero-pillar__head">
+                    <IconComp size={18} className="hero-pillar__icon" aria-hidden="true" />
+                    <h2 className="hero-pillar__title">{pillar.title}</h2>
+                  </div>
                   <p className="hero-pillar__desc">{pillar.summary}</p>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       </div>
     </section>
   );

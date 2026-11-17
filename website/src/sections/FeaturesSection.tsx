@@ -107,151 +107,143 @@ export function FeaturesSection() {
   };
 
   return (
-    <section id="fitur" className="section">
+    <section id="fitur" className="section section--light">
       <div className="container">
-        <div className="surface-panel">
-          <div className="surface-panel__header">
-            <SectionHeader
-              eyebrow="Fitur Utama (Audit MVP 1.0)"
-              title="20 Kemampuan Terimplementasi untuk Olah Citra Ilmiah"
-              subtitle="Seluruh daftar diaudit langsung dari kode sumber HILALONE dan dipisahkan status pengujiannya secara terbuka."
-              icon={<Layers size={14} aria-hidden="true" />}
-            />
+        <div className="section-head-row">
+          <SectionHeader
+            eyebrow="Fitur Utama (Audit MVP 1.0)"
+            title="20 Kemampuan Terimplementasi untuk Olah Citra Ilmiah"
+            subtitle="Seluruh daftar diaudit langsung dari kode sumber HILALONE dan dipisahkan status pengujiannya secara terbuka."
+            icon={<Layers size={14} aria-hidden="true" />}
+          />
 
-            <div className="filter-bar__badges">
-              <span className="status-badge status-badge--ok">TERUJI: 19 Fitur</span>
-              <span className="status-badge status-badge--partial">PARSIAL: 1 Fitur (RAW Kamera)</span>
-            </div>
+          <div className="filter-bar__badges">
+            <span className="status-badge status-badge--ok">TERUJI: 19 Fitur</span>
+            <span className="status-badge status-badge--partial">PARSIAL: 1 Fitur (RAW Kamera)</span>
           </div>
+        </div>
 
-          {/* Blok 2 Referensi: Bar Tab Filter Tunggal + Kontrol Paginasi */}
-          <div className="filter-bar">
-            <div className="tabs-scroller">
-              <div className="filter-tabs" role="tablist" aria-label="Filter kategori fitur">
-                {FEATURE_CATEGORIES.map((category, idx) => {
-                  const active = category === selectedCategory;
-                  return (
-                    <button
-                      key={category}
-                      ref={(el) => {
-                        tabRefs.current[idx] = el;
-                      }}
-                      id={tabIdFor(category)}
-                      type="button"
-                      role="tab"
-                      tabIndex={active ? 0 : -1}
-                      aria-selected={active}
-                      className="filter-tab"
-                      onClick={() => selectCategory(category, idx)}
-                      onKeyDown={(e) => handleTabKeyDown(e, idx)}
-                    >
-                      {category}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {selectedCategory === "Semua" ? (
-              <div className="pager-controls">
-                {!showAll ? (
-                  <div className="pager-nav" aria-label="Navigasi halaman fitur">
-                    <button
-                      type="button"
-                      className="pager-btn"
-                      onClick={() => setPageIndex((p) => (p - 1 + totalPages) % totalPages)}
-                      aria-label="Halaman fitur sebelumnya"
-                    >
-                      <ChevronLeft size={16} aria-hidden="true" />
-                    </button>
-                    <span className="pager-status">
-                      {safePageIndex + 1} / {totalPages}
-                    </span>
-                    <button
-                      type="button"
-                      className="pager-btn pager-btn--solid"
-                      onClick={() => setPageIndex((p) => (p + 1) % totalPages)}
-                      aria-label="Halaman fitur berikutnya"
-                    >
-                      <ChevronRight size={16} aria-hidden="true" />
-                    </button>
-                  </div>
-                ) : null}
-
-                <button
-                  type="button"
-                  className="btn btn--secondary btn--sm"
-                  aria-pressed={showAll}
-                  onClick={() => setShowAll((prev) => !prev)}
-                >
-                  {showAll ? "Tampilkan Ringkas (6)" : `Lihat Semua (${filteredFeatures.length})`}
-                </button>
-              </div>
-            ) : null}
-          </div>
-
-          <div
-            role="tabpanel"
-            aria-labelledby={tabIdFor(selectedCategory)}
-            tabIndex={0}
-          >
-            <div className="grid-3 grid-3--subgrid">
-              {visibleFeatures.map((feature) => {
-                const IconComp = ICON_MAP[feature.iconName];
+        <div className="filter-bar">
+          <div className="tabs-scroller">
+            <div className="filter-tabs" role="tablist" aria-label="Filter kategori fitur">
+              {FEATURE_CATEGORIES.map((category, idx) => {
+                const active = category === selectedCategory;
                 return (
-                  <article key={feature.id} className="card feature-card">
-                    <div className="feature-card__top">
-                      <div className="feature-card__icon" aria-hidden="true">
-                        <IconComp size={18} />
-                      </div>
-                      <span
-                        className={`status-badge ${
-                          feature.status === "TERUJI" ? "status-badge--ok" : "status-badge--partial"
-                        }`}
-                      >
-                        {feature.status === "TERUJI" ? (
-                          <CheckCircle2 size={11} aria-hidden="true" />
-                        ) : null}
-                        {feature.status}
-                      </span>
-                    </div>
-
-                    <div className="feature-card__body">
-                      <h3 className="card__title">{feature.name}</h3>
-                      <p className="card__text">{feature.description}</p>
-                    </div>
-
-                    <div className="feature-card__benefit">
-                      <div>
-                        <strong>Manfaat:</strong> {feature.benefit}
-                      </div>
-                      {feature.statusNote ? (
-                        <div className="feature-card__note">
-                          Catatan uji: {feature.statusNote}
-                        </div>
-                      ) : null}
-                    </div>
-                  </article>
+                  <button
+                    key={category}
+                    ref={(el) => {
+                      tabRefs.current[idx] = el;
+                    }}
+                    id={tabIdFor(category)}
+                    type="button"
+                    role="tab"
+                    tabIndex={active ? 0 : -1}
+                    aria-selected={active}
+                    className="filter-tab"
+                    onClick={() => selectCategory(category, idx)}
+                    onKeyDown={(e) => handleTabKeyDown(e, idx)}
+                  >
+                    {category}
+                  </button>
                 );
               })}
             </div>
           </div>
 
-          {canPaginate ? (
-            <div className="pager-dots" aria-label="Indikator halaman fitur">
-              {Array.from({ length: totalPages }, (_, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  className={`pager-dot${idx === safePageIndex ? " is-active" : ""}`}
-                  aria-label={`Halaman fitur ${idx + 1}`}
-                  aria-current={idx === safePageIndex ? "step" : undefined}
-                  onClick={() => setPageIndex(idx)}
-                />
-              ))}
+          {selectedCategory === "Semua" ? (
+            <div className="pager-controls">
+              {!showAll ? (
+                <div className="pager-nav" aria-label="Navigasi halaman fitur">
+                  <button
+                    type="button"
+                    className="pager-btn"
+                    onClick={() => setPageIndex((p) => (p - 1 + totalPages) % totalPages)}
+                    aria-label="Halaman fitur sebelumnya"
+                  >
+                    <ChevronLeft size={17} aria-hidden="true" />
+                  </button>
+                  <span className="pager-status">
+                    {safePageIndex + 1} / {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    className="pager-btn pager-btn--solid"
+                    onClick={() => setPageIndex((p) => (p + 1) % totalPages)}
+                    aria-label="Halaman fitur berikutnya"
+                  >
+                    <ChevronRight size={17} aria-hidden="true" />
+                  </button>
+                </div>
+              ) : null}
+
+              <button
+                type="button"
+                className="btn btn--secondary btn--sm"
+                aria-pressed={showAll}
+                onClick={() => setShowAll((prev) => !prev)}
+              >
+                {showAll ? "Tampilkan Ringkas (6)" : `Lihat Semua (${filteredFeatures.length})`}
+              </button>
             </div>
           ) : null}
         </div>
+
+        <div role="tabpanel" aria-labelledby={tabIdFor(selectedCategory)} tabIndex={0}>
+          <div className="grid-3 grid-3--subgrid">
+            {visibleFeatures.map((feature) => {
+              const IconComp = ICON_MAP[feature.iconName];
+              return (
+                <article key={feature.id} className="card feature-card">
+                  <div className="feature-card__top">
+                    <span className="feature-card__cat">
+                      <IconComp size={15} className="feature-card__icon-inline" aria-hidden="true" />
+                      <span>{feature.category}</span>
+                    </span>
+                    <span
+                      className={`status-badge ${
+                        feature.status === "TERUJI" ? "status-badge--ok" : "status-badge--partial"
+                      }`}
+                    >
+                      {feature.status === "TERUJI" ? (
+                        <CheckCircle2 size={12} aria-hidden="true" />
+                      ) : null}
+                      {feature.status}
+                    </span>
+                  </div>
+
+                  <div className="feature-card__body">
+                    <h3 className="card__title">{feature.name}</h3>
+                    <p className="card__text">{feature.description}</p>
+                  </div>
+
+                  <div className="feature-card__benefit">
+                    <div>
+                      <strong>Manfaat:</strong> {feature.benefit}
+                    </div>
+                    {feature.statusNote ? (
+                      <div className="feature-card__note">Catatan uji: {feature.statusNote}</div>
+                    ) : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+
+        {canPaginate ? (
+          <div className="pager-dots" aria-label="Indikator halaman fitur">
+            {Array.from({ length: totalPages }, (_, idx) => (
+              <button
+                key={idx}
+                type="button"
+                className={`pager-dot${idx === safePageIndex ? " is-active" : ""}`}
+                aria-label={`Halaman fitur ${idx + 1}`}
+                aria-current={idx === safePageIndex ? "step" : undefined}
+                onClick={() => setPageIndex(idx)}
+              />
+            ))}
+          </div>
+        ) : null}
       </div>
     </section>
   );

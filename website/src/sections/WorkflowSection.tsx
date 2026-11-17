@@ -7,10 +7,9 @@ export function WorkflowSection() {
   const current = WORKFLOW_STEPS[activeIndex];
 
   return (
-    <section id="alur-kerja" className="section">
+    <section id="alur-kerja" className="section section--alt">
       <div className="container">
-        {/* Blok 3 Referensi: Editorial 50/50 Split — Judul & Inspector kiri | Vertical Step Spine kanan */}
-        <div className="surface-panel workflow-editorial">
+        <div className="workflow-editorial">
           <div className="workflow-editorial__intro">
             <div className="eyebrow">
               <GitCommitHorizontal size={14} aria-hidden="true" />
@@ -18,9 +17,8 @@ export function WorkflowSection() {
             </div>
             <h2 className="section-title">Alur Kerja Pemrosesan 9 Tahap</h2>
             <p className="section-subtitle">
-              Setiap tahapan mengikuti urutan eksekusi aktual pada{" "}
-              <code>ProcessingPipelineOrchestrator</code>. Pilih salah satu langkah untuk
-              meninjau peran dan keluarannya.
+              Memetakan alur kerja pengguna dari pembacaan sumber hingga ekspor terpisah, selaras
+              dengan eksekusi <code>ProcessingPipelineOrchestrator</code> dan modul I/O aktual.
             </p>
 
             <div className="workflow-legend">
@@ -29,17 +27,13 @@ export function WorkflowSection() {
               <span className="status-badge status-badge--partial">Opsional: Flat Calibration</span>
             </div>
 
-            <div className="workflow-detail-card" aria-live="polite">
-              <div className="eyebrow" style={{ marginBottom: "0.35rem" }}>
+            <div className="card workflow-detail-card" aria-live="polite">
+              <div className="eyebrow">
                 Tahap {current.stepNumber} — {current.code} ({current.modeTag})
               </div>
               <h3 className="workflow-detail-card__title">{current.title}</h3>
-              <p className="card__text" style={{ marginBottom: "0.85rem" }}>
-                {current.technicalDetail}
-              </p>
-              <div className="workflow-detail-card__output">
-                Keluaran tahap: {current.outputs}
-              </div>
+              <p className="card__text">{current.technicalDetail}</p>
+              <div className="workflow-detail-card__output">Keluaran tahap: {current.outputs}</div>
             </div>
           </div>
 

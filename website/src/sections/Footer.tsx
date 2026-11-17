@@ -6,24 +6,26 @@ export function Footer() {
       <div className="container">
         <div className="footer__grid">
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.75rem" }}>
+            <div className="footer__brand">
               <picture>
                 <source srcSet="/branding/hilalone-icon-standard-96.webp" type="image/webp" />
                 <img
+                  className="footer__logo"
                   src="/branding/hilalone-icon-standard-96.png"
                   alt="Ikon HILALONE"
-                  width={38}
-                  height={38}
+                  width={40}
+                  height={40}
+                  loading="lazy"
                 />
               </picture>
               <div>
-                <div style={{ fontWeight: 800, letterSpacing: "0.06em" }}>{siteConfig.fullTitle}</div>
-                <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                <div className="footer__brand-title">{siteConfig.fullTitle}</div>
+                <div className="footer__brand-meta">
                   Versi {siteConfig.version} ({siteConfig.mvpStage})
                 </div>
               </div>
             </div>
-            <p className="card__text" style={{ maxWidth: "44ch" }}>
+            <p className="footer__desc">
               Filosofi pengembangan: &ldquo;{siteConfig.philosophy}&rdquo; — pengolahan citra
               astronomi yang menjaga integritas data linear dari hulu hingga ekspor.
             </p>
@@ -33,22 +35,25 @@ export function Footer() {
             <h2 className="footer__heading">Navigasi</h2>
             <ul className="footer__links">
               <li>
-                <a href="#tentang">Tentang HILALONE</a>
-              </li>
-              <li>
                 <a href="#fitur">Fitur Utama</a>
-              </li>
-              <li>
-                <a href="#antarmuka">Pratinjau Antarmuka</a>
               </li>
               <li>
                 <a href="#alur-kerja">Alur Kerja Pipeline</a>
               </li>
               <li>
-                <a href="#roadmap">Roadmap</a>
+                <a href="#antarmuka">Pratinjau Antarmuka</a>
+              </li>
+              <li>
+                <a href="#tentang">Tentang HILALONE</a>
+              </li>
+              <li>
+                <a href="#integritas">Integritas Ilmiah</a>
               </li>
               <li>
                 <a href="#spesifikasi">Spesifikasi Teknis</a>
+              </li>
+              <li>
+                <a href="#roadmap">Roadmap</a>
               </li>
             </ul>
           </div>
@@ -93,7 +98,8 @@ export function Footer() {
 
         <div className="footer__bottom">
           <span>
-            &copy; {siteConfig.copyrightYear} {siteConfig.copyrightHolder}. Seluruh hak cipta sesuai lisensi proyek.
+            &copy; {siteConfig.copyrightYear} {siteConfig.copyrightHolder}. Seluruh hak cipta sesuai
+            lisensi proyek.
           </span>
           <span>HILALONE — {siteConfig.tagline}</span>
         </div>

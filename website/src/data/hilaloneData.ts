@@ -102,18 +102,18 @@ export const HERO_HIGHLIGHTS = [
 export const HERO_PILLARS = [
   {
     id: "readonly",
-    title: "Read-Only & float32 Linear",
-    summary: "Berkas sumber asli tidak pernah diubah dan diproses linear tanpa kuantisasi 8-bit dini.",
+    title: "Sumber Read-Only & float32",
+    summary: "Berkas observasi dibuka baca-saja dan diproses linear penuh tanpa kuantisasi 8-bit dini.",
   },
   {
     id: "no-align",
     title: "Stacking Tanpa Alignment Paksa",
-    summary: "Stabilitas piksel diukur baca-saja (FFT Phase Correlation), menjaga geometri asli frame.",
+    summary: "Memvalidasi ukuran serta kanal mono/RGB dan menggabungkan frame tanpa warping geometris.",
   },
   {
-    id: "night-updater",
-    title: "Night Vision Red & SHA-256 Updater",
-    summary: "Tema merah observasi malam serta pemeriksaan pembaruan GitHub tervalidasi hash SHA-256.",
+    id: "split-output",
+    title: "Master Linear & Visual Terpisah",
+    summary: "Menyimpan FITS/TIFF float32 terpisah dari hasil stretch visual serta mode Night Vision Red.",
   },
 ] as const;
 
@@ -254,8 +254,8 @@ export const FEATURES: readonly FeatureItem[] = [
     name: "Automatic Image Stacking",
     category: "Kalibrasi & Stacking",
     iconName: "Layers",
-    description: "Mean, Sigma-Clipped Mean, dan Quality-Weighted Robust stacking per-strip plus pengukuran pergeseran baca-saja (Phase Correlation FFT).",
-    benefit: "Menurunkan noise acak latar langit sambil menolak frame campur mono/RGB dan tanpa alignment paksa.",
+    description: "Mean, Sigma-Clipped Mean, dan Quality-Weighted Robust stacking per-strip tanpa warping atau alignment geometris otomatis.",
+    benefit: "Menurunkan derau acak latar langit sambil menolak sequence campuran mono/RGB secara eksplisit.",
     status: "TERUJI",
   },
   {
@@ -426,12 +426,12 @@ export const WORKFLOW_STEPS: readonly WorkflowStep[] = [
   {
     stepNumber: "02",
     code: "SEQUENCE VALIDATION",
-    title: "Cek Kompatibilitas & Pergeseran",
+    title: "Validasi Kompatibilitas Sequence",
     modeTag: "Multi-Frame / Video / SER",
-    summary: "Memeriksa ukuran, jumlah kanal, orientasi, dan mengukur translasi antar frame secara baca-saja.",
+    summary: "Memeriksa kesamaan ukuran, orientasi, jumlah kanal, dan menolak sequence campuran mono/RGB.",
     technicalDetail:
-      "Sequence campuran mono dan RGB ditolak. Pergeseran (dx, dy) diukur terhadap frame referensi memakai Phase Correlation 2D FFT (ambang 1,0 px) untuk status OK / MELEBIHI_AMBANG / INDETERMINATE tanpa alignment otomatis.",
-    outputs: "PreStackValidationReport & PositionStabilityReport",
+      "Validation gate menolak pencampuran kanal mono dan RGB serta menandai frame bermasalah. Utilitas estimasi translasi FFT tersedia di modul validator, namun precheck posisi dinonaktifkan secara default di pipeline v1.x tanpa alignment otomatis.",
+    outputs: "SequenceCompatibilityReport & indeks frame kompatibel",
   },
   {
     stepNumber: "03",
@@ -450,7 +450,7 @@ export const WORKFLOW_STEPS: readonly WorkflowStep[] = [
     modeTag: "Opsional",
     summary: "Aktif hanya jika opsi Flat Calibration dicentang dan Master Flat kompatibel tersedia.",
     technicalDetail:
-      "Memeriksa kecocokan resolusi, kanal, dan orientasi Master Flat (single atau sequence), menormalkan flat dengan median, lalu membagi sinyal light dengan proteksi nilai mendekati nol. Tanpa dark/bias pada MVP 1.0.",
+      "Memeriksa kecocokan dimensi dan kanal Master Flat saat operasi berlangsung, menormalkan flat dengan median, lalu membagi sinyal light dengan proteksi nilai mendekati nol. Tanpa dark/bias pada MVP 1.0.",
     outputs: "calibrated_data (float32) + FlatCalibrationReport",
   },
   {
@@ -667,7 +667,7 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
     id: "what-is-stacking",
     question: "Apa kegunaan Image Stacking?",
     answer:
-      "Image Stacking menggabungkan banyak frame pengamatan yang kompatibel (ukuran dan kanal sama) untuk menurunkan derau acak latar langit sehingga sinyal sabit yang redup lebih bersih. Pada MVP 1.0, stacking dijalankan tanpa alignment/warping paksa dan pergeseran diukur secara baca-saja.",
+      "Image Stacking menggabungkan banyak frame pengamatan yang kompatibel (ukuran dan kanal sama) untuk menurunkan derau acak latar langit sehingga sinyal sabit yang redup lebih bersih. Pada MVP 1.0, stacking dijalankan tanpa alignment atau warping geometris paksa.",
   },
   {
     id: "what-is-flat",

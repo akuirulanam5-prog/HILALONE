@@ -29,21 +29,20 @@ export function FaqSection() {
   };
 
   return (
-    <section id="faq" className="section">
+    <section id="faq" className="section section--light">
       <div className="container">
-        <div className="surface-panel">
-          <SectionHeader
-            eyebrow="Pertanyaan Umum"
-            title="FAQ HILALONE"
-            subtitle="Jawaban ringkas mengenai kemampuan aktual, format berkas, pemisahan data ilmiah, dan rencana versi mendatang."
-            centered
-            icon={<HelpCircle size={14} aria-hidden="true" />}
-          />
+        <div className="faq-wrap">
+          <div className="section-head-row">
+            <SectionHeader
+              eyebrow="Pertanyaan Umum"
+              title="FAQ HILALONE"
+              subtitle="Jawaban ringkas mengenai kemampuan aktual, format berkas, pemisahan data ilmiah, dan rencana versi mendatang."
+              icon={<HelpCircle size={14} aria-hidden="true" />}
+            />
 
-          <div className="faq-toolbar">
             <button
               type="button"
-              className="btn btn--ghost btn--sm"
+              className="btn btn--secondary btn--sm"
               aria-expanded={allExpanded}
               onClick={handleToggleAll}
             >
@@ -51,7 +50,7 @@ export function FaqSection() {
             </button>
           </div>
 
-          {/* Native <details> + <summary> sesuai modern-web-guidance accordion (tanpa heading di dalam summary) */}
+          {/* Native <details> + <summary> tanpa elemen heading di dalam summary */}
           <div ref={listRef} className="faq-list">
             {FAQ_ITEMS.map((item, idx) => (
               <details
