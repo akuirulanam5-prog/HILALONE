@@ -5,53 +5,43 @@ import { siteConfig } from "../data/siteConfig";
 
 export function ScientificIntegritySection() {
   return (
-    <section id="integritas" className="section section--alt">
+    <section id="integritas" className="section section--light">
       <div className="container">
         <SectionHeader
           eyebrow="Scientific Integrity"
           title={`"${siteConfig.philosophy}"`}
-          subtitle="Setiap cabang data dipisahkan secara eksplisit di dalam PipelineResult sehingga pengamat dapat mengekspor data ilmiah linear murni tanpa bercampur kurva tampilan."
+          subtitle="Setiap cabang data dipisahkan eksplisit di dalam PipelineResult sehingga pengamat dapat mengekspor data ilmiah linear murni tanpa bercampur kurva tampilan."
           icon={<ShieldCheck size={14} aria-hidden="true" />}
         />
 
-        <div className="integrity-grid" style={{ marginBottom: "1.75rem" }}>
-          {INTEGRITY_LAYERS.map((layer) => (
-            <article key={layer.code} className="layer-card">
-              <div className="layer-card__code">CABANG {layer.code}</div>
-              <h3 className="card__title" style={{ fontSize: "0.98rem", marginBottom: 0 }}>
-                {layer.title}
-              </h3>
-              <div className="layer-card__dtype">{layer.dtype}</div>
-              <p className="card__text" style={{ fontSize: "0.85rem" }}>
-                {layer.role}
-              </p>
-              <div
-                style={{
-                  marginTop: "auto",
-                  paddingTop: "0.55rem",
-                  borderTop: "1px solid var(--border-subtle)",
-                  fontSize: "0.8rem",
-                  color: "#cbd5e1",
-                }}
+        <div className="integrity-grid">
+          {INTEGRITY_LAYERS.map((layer) => {
+            const isLinearMaster = layer.code === "C / D";
+            return (
+              <article
+                key={layer.code}
+                className={`card layer-card${isLinearMaster ? " layer-card--linear" : ""}`}
               >
-                {layer.guarantee}
-              </div>
-            </article>
-          ))}
+                <div className="layer-card__top">
+                  <span className="layer-card__code">CABANG {layer.code}</span>
+                  <span className="layer-card__dtype">{layer.dtype}</span>
+                </div>
+                <h3 className="card__title">{layer.title}</h3>
+                <p className="card__text">{layer.role}</p>
+                <div className="layer-card__guarantee">{layer.guarantee}</div>
+              </article>
+            );
+          })}
         </div>
 
-        <div className="card">
-          <h3 className="card__title" style={{ marginBottom: "0.85rem" }}>
+        <div className="integrity-rules-band">
+          <h3 className="integrity-rules-band__heading">
             Jaminan Transparansi &amp; Larangan Pemrosesan MVP 1.0
           </h3>
           <ul className="rules-list">
             {NON_INVENTION_RULES.map((rule) => (
-              <li key={rule}>
-                <Check
-                  size={17}
-                  style={{ color: "var(--accent-emerald)", flexShrink: 0, marginTop: 3 }}
-                  aria-hidden="true"
-                />
+              <li key={rule} className="rules-list__item">
+                <Check size={17} className="rules-list__icon" aria-hidden="true" />
                 <span>{rule}</span>
               </li>
             ))}

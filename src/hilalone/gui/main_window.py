@@ -7,14 +7,17 @@ pemrosesan).
 
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import datetime
+import logging
 from pathlib import Path
 import math
 import os
 import time
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
-from PySide6.QtCore import QEventLoop, QSettings, QSize, Qt
-from PySide6.QtGui import QAction, QPixmap, QTransform
+from PySide6.QtCore import QEventLoop, QSettings, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QDesktopServices, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -42,7 +45,7 @@ from PySide6.QtWidgets import (
 
 import numpy as np
 
-from hilalone import APP_NAME, APP_SUBTITLE
+from hilalone import APP_NAME, APP_SUBTITLE, __version__
 from hilalone.core.logging import (
     LogModule,
     ProcessingRunSummary,
@@ -54,6 +57,7 @@ from hilalone.core.logging import (
     log_sequence_validation_report,
     set_active_logger,
 )
+from hilalone.gui.about_dialog import AboutDialog
 from hilalone.gui.accordion import AccordionGroup, AccordionHeader, AccordionSection
 from hilalone.gui.console_panel import ConsoleLogPanel, LogEntry, LogLevel, LogManager
 from hilalone.gui.curves_window import CurvesWindow, apply_curve_lut_to_array, apply_curve_lut_to_pixmap
@@ -67,6 +71,24 @@ from hilalone.gui.stacking_worker import StackingWorker
 from hilalone.gui.state_manager import ProcessingState, ProcessingStateManager
 from hilalone.gui.styles import ThemeMode, get_theme_stylesheet
 from hilalone.gui.top_panels import FrameListPanel, ImageInfoPanel, OpenImagePanel
+from hilalone.gui.update_dialog import UpdateDialog
+from hilalone.gui.update_notification_dialog import UpdateNotificationDialog
+from hilalone.updates.github_updater import is_frozen_app
+from hilalone.updates.models import GITHUB_NEW_ISSUE_URL, UpdateCheckResult
+from hilalone.updates.update_preferences import (
+    AUTO_UPDATE_STARTUP_DELAY_MS,
+    REMINDER_DELAY_INTERVAL,
+    UpdatePreferences,
+    load_update_preferences,
+    record_check_timestamp,
+    record_notification_shown,
+    save_update_preferences,
+    should_run_automatic_check,
+    should_show_update_notification,
+    snooze_update_reminder,
+    utc_now,
+)
+from hilalone.updates.update_worker import UpdateWorker, UpdateWorkerMode
 from hilalone.input_manager.adapters.fits_reader import (
     UNAVAILABLE_TEXT as FITS_UNAVAILABLE,
     FitsHduSummary,
@@ -566,6 +588,27 @@ class MainWindow(QMainWindow):
         self.histogram_window: HistogramWindow | None = None
         self.curves_window: CurvesWindow | None = None
         self.info_dialog: ImageInformationDialog | None = None
+        self.about_dialog: AboutDialog | None = None
+        self.update_dialog: UpdateDialog | None = None
+        self.update_notification_dialog: UpdateNotificationDialog | None = None
+        self._update_worker: UpdateWorker | None = None
+        self._update_prefs: UpdatePreferences = UpdatePreferences()
+        self._update_config_path: Path | None = None
+        self._is_frozen_checker: Callable[[], bool] = is_frozen_app
+        self._now_provider: Callable[[], datetime] = utc_now
+        self._auto_check_func: Any = None
+        self._update_check_is_automatic: bool = False
+        self._startup_timer_scheduled: bool = False
+        self._startup_update_delay_ms: int = AUTO_UPDATE_STARTUP_DELAY_MS
+        self._is_closing: bool = False
+        self._was_closed: bool = False
+        self._startup_update_timer = QTimer(self)
+        self._startup_update_timer.setSingleShot(True)
+        self._startup_update_timer.setInterval(self._startup_update_delay_ms)
+        self._startup_update_timer.timeout.connect(self._on_startup_update_timer_timeout)
+        self._reminder_update_timer = QTimer(self)
+        self._reminder_update_timer.setSingleShot(True)
+        self._reminder_update_timer.timeout.connect(self._on_reminder_update_timer_timeout)
         self._curves_backup_qimage: Any = None
         self._curves_backup_scientific_data: np.ndarray | None = None
         self._active_original_qimage: Any = None
@@ -587,11 +630,17 @@ class MainWindow(QMainWindow):
         return "PYTEST_CURRENT_TEST" not in os.environ
 
     def _load_user_preferences(self, config_path: Path | None = None) -> None:
-        """Memuat preferensi pengguna (tema & direktori terakhir) dari folder lokal pengguna Windows."""
-        if config_path is None and not self._preferences_enabled():
+        """Memuat preferensi pengguna (tema, direktori, & update) dari folder lokal Windows."""
+        effective_cfg = config_path if config_path is not None else self._update_config_path
+        if effective_cfg is None and not self._preferences_enabled():
             return
         try:
-            cfg = config_path if config_path is not None else get_user_config_path()
+            self._update_prefs = load_update_preferences(effective_cfg)
+            if hasattr(self, "act_auto_update_check"):
+                self.act_auto_update_check.blockSignals(True)
+                self.act_auto_update_check.setChecked(self._update_prefs.auto_update_check_enabled)
+                self.act_auto_update_check.blockSignals(False)
+            cfg = effective_cfg if effective_cfg is not None else get_user_config_path()
             if not cfg.exists():
                 return
             settings = QSettings(str(cfg), QSettings.Format.IniFormat)
@@ -610,16 +659,18 @@ class MainWindow(QMainWindow):
             pass
 
     def _save_user_preferences(self, config_path: Path | None = None) -> None:
-        """Menyimpan preferensi tema dan direktori kerja terakhir ke folder konfigurasi pengguna."""
-        if config_path is None and not self._preferences_enabled():
+        """Menyimpan preferensi tema, direktori kerja, & update ke folder konfigurasi."""
+        effective_cfg = config_path if config_path is not None else self._update_config_path
+        if effective_cfg is None and not self._preferences_enabled():
             return
         try:
-            cfg = config_path if config_path is not None else get_user_config_path()
+            cfg = effective_cfg if effective_cfg is not None else get_user_config_path()
             cfg.parent.mkdir(parents=True, exist_ok=True)
             settings = QSettings(str(cfg), QSettings.Format.IniFormat)
             settings.setValue("ui/night_vision", bool(self._is_night_vision))
             settings.setValue("ui/last_dir", str(self._last_dir))
             settings.sync()
+            save_update_preferences(self._update_prefs, cfg)
         except Exception:
             pass
 
@@ -840,6 +891,27 @@ class MainWindow(QMainWindow):
         menu_view.addSeparator()
         act_reset_layout = menu_view.addAction("Reset Layout Jendela")
         act_reset_layout.triggered.connect(lambda: self.resize(1366, 768))
+
+        # 5. Menu HELP
+        menu_help = menu_bar.addMenu("Help")
+
+        self.act_check_updates = menu_help.addAction("Check for Updates...")
+        self.act_check_updates.triggered.connect(self.check_for_updates_interactive)
+
+        self.act_auto_update_check = menu_help.addAction("Automatic Update Check")
+        self.act_auto_update_check.setCheckable(True)
+        self.act_auto_update_check.setChecked(self._update_prefs.auto_update_check_enabled)
+        self.act_auto_update_check.triggered.connect(self.toggle_automatic_update_check)
+
+        menu_help.addSeparator()
+
+        self.act_report_issue = menu_help.addAction("Report an Issue...")
+        self.act_report_issue.triggered.connect(self.open_report_issue_page)
+
+        menu_help.addSeparator()
+
+        self.act_about_hilalone = menu_help.addAction("About HILALONE...")
+        self.act_about_hilalone.triggered.connect(self.show_about_dialog)
 
     def _set_top_panels_visible(self, visible: bool) -> None:
         """Menampilkan atau menyembunyikan kontainer Panel A, B, C."""
@@ -1607,6 +1679,11 @@ class MainWindow(QMainWindow):
 
     def _apply_theme_to_widgets(self, is_night_vision: bool) -> None:
         """Menyelaraskan seluruh elemen visual, ikon, status bar, accordion, dan logo dengan tema aktif."""
+        # 0. Ikon Jendela
+        window_icon = get_app_icon(night_vision=is_night_vision)
+        if not window_icon.isNull():
+            self.setWindowIcon(window_icon)
+
         # 1. Logo Header
         if hasattr(self, "logo_label"):
             logo_pixmap = get_header_logo_pixmap(target_height=44, night_vision=is_night_vision)
@@ -1746,6 +1823,14 @@ class MainWindow(QMainWindow):
         # 9. Console Panel
         if hasattr(self, "console_panel") and hasattr(self.console_panel, "set_night_vision"):
             self.console_panel.set_night_vision(is_night_vision)
+
+        # 10. Dialog Help & Pembaruan
+        if getattr(self, "about_dialog", None) is not None:
+            self.about_dialog.apply_theme(is_night_vision)
+        if getattr(self, "update_dialog", None) is not None:
+            self.update_dialog.apply_theme(is_night_vision)
+        if getattr(self, "update_notification_dialog", None) is not None:
+            self.update_notification_dialog.apply_theme(is_night_vision)
 
     def toggle_console_panel(self, visible: bool | None = None) -> None:
         """Menampilkan atau menyembunyikan panel Console / Processing Log di bagian bawah."""
@@ -5679,7 +5764,418 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Hasil tersimpan: {saved_path}")
         return saved_path
 
+    # ------------------------------------------------------------------ Help & Update Slots
+    def _has_active_processing_worker(self) -> bool:
+        """Memeriksa apakah ada pipeline atau stacking worker yang sedang berjalan."""
+        return self._is_pipeline_running() or self._is_stacking_running()
+
+    def _log_update_dialog_message(self, level: str, source: str, detail: str) -> None:
+        """Meneruskan pesan status dari dialog updater ke LogManager."""
+        lvl = (level or "INFO").upper()
+        if lvl == "SUCCESS":
+            self.log_manager.success("UPDATE", source, detail)
+        elif lvl == "WARNING":
+            self.log_manager.warning("UPDATE", source, detail)
+        elif lvl == "ERROR":
+            self.log_manager.error("UPDATE", source, detail)
+        else:
+            self.log_manager.info("UPDATE", source, detail)
+
+    def open_report_issue_page(self, _checked: bool = False) -> None:
+        """Membuka halaman GitHub Issues di browser default tanpa mengirim log otomatis."""
+        opened = QDesktopServices.openUrl(QUrl(GITHUB_NEW_ISSUE_URL))
+        self.log_manager.info(
+            "HELP",
+            "Report an Issue",
+            f"Membuka formulir laporan masalah GitHub: {GITHUB_NEW_ISSUE_URL}",
+        )
+        if not opened:
+            QMessageBox.information(
+                self,
+                "Report an Issue",
+                f"Silakan buka halaman GitHub Issues melalui browser:\n\n{GITHUB_NEW_ISSUE_URL}",
+            )
+
+    def show_about_dialog(self, _checked: bool = False) -> None:
+        """Menampilkan dialog khusus About HILALONE sesuai tema aktif."""
+        if self.about_dialog is None:
+            self.about_dialog = AboutDialog(night_vision=self._is_night_vision, parent=self)
+        else:
+            self.about_dialog.apply_theme(self._is_night_vision)
+        self.about_dialog.show()
+        self.about_dialog.raise_()
+        self.about_dialog.activateWindow()
+        self.log_manager.info("HELP", "About HILALONE Dibuka", f"Versi aplikasi: v{__version__}")
+
+    def _persist_update_preferences(self, config_path: Path | None = None) -> None:
+        """Menyimpan preferensi & jadwal automatic update ke berkas konfigurasi bila aktif."""
+        effective_cfg = config_path if config_path is not None else self._update_config_path
+        if effective_cfg is None and not self._preferences_enabled():
+            return
+        try:
+            save_update_preferences(self._update_prefs, effective_cfg)
+        except Exception:
+            pass
+
+    def toggle_automatic_update_check(
+        self,
+        enabled: bool | None = None,
+        *,
+        config_path: Path | None = None,
+    ) -> None:
+        """Mengaktifkan atau menonaktifkan pemeriksaan pembaruan otomatis."""
+        new_val = (
+            not self._update_prefs.auto_update_check_enabled
+            if enabled is None
+            else bool(enabled)
+        )
+        self._update_prefs = replace(self._update_prefs, auto_update_check_enabled=new_val)
+        if hasattr(self, "act_auto_update_check"):
+            self.act_auto_update_check.blockSignals(True)
+            self.act_auto_update_check.setChecked(new_val)
+            self.act_auto_update_check.blockSignals(False)
+
+        if not new_val:
+            self._startup_update_timer.stop()
+            self._reminder_update_timer.stop()
+
+        self._persist_update_preferences(config_path)
+        state_text = "diaktifkan" if new_val else "dinonaktifkan"
+        self.log_manager.info(
+            "UPDATE",
+            "Automatic Update Check",
+            f"Pemeriksaan pembaruan otomatis {state_text}.",
+        )
+
+    def _schedule_startup_update_check_if_eligible(self) -> None:
+        """Menjadwalkan QTimer 10 detik setelah jendela utama ditampilkan bila memenuhi syarat."""
+        if self._startup_timer_scheduled or self._is_closing or self._was_closed:
+            return
+        self._startup_timer_scheduled = True
+        if not bool(self._is_frozen_checker()):
+            return
+        if not self._update_prefs.auto_update_check_enabled:
+            return
+        self._startup_update_timer.start(max(0, int(self._startup_update_delay_ms)))
+
+    def showEvent(self, event: Any) -> None:  # noqa: N802
+        """Menjadwalkan cek update otomatis sekitar 10 detik setelah tampilan siap."""
+        super().showEvent(event)
+        self._schedule_startup_update_check_if_eligible()
+
+    def _on_startup_update_timer_timeout(self) -> None:
+        """Slot saat timer startup 10 detik berbunyi."""
+        self.run_automatic_update_check()
+
+    def _on_reminder_update_timer_timeout(self) -> None:
+        """Slot saat pengingat 24 jam ('Later') berakhir."""
+        self.run_automatic_update_check()
+
+    def run_automatic_update_check(
+        self,
+        *,
+        check_func: Any = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Menjalankan pemeriksaan pembaruan otomatis di background bila syarat terpenuhi."""
+        if self._is_closing or self._was_closed:
+            return False
+        if self._update_worker is not None and self._update_worker.isRunning():
+            return False
+
+        now_dt = now if now is not None else self._now_provider()
+        is_frozen = bool(self._is_frozen_checker())
+        if not should_run_automatic_check(self._update_prefs, now=now_dt, is_frozen=is_frozen):
+            return False
+
+        self._update_check_is_automatic = True
+        chosen_check = check_func if check_func is not None else self._auto_check_func
+        self.log_manager.info(
+            "UPDATE",
+            "Cek Pembaruan Otomatis",
+            f"Memeriksa pembaruan rilis stabil di latar belakang (versi lokal: v{__version__})...",
+        )
+        worker = UpdateWorker(
+            mode=UpdateWorkerMode.CHECK_ONLY,
+            local_version=__version__,
+            check_func=chosen_check,
+            parent=self,
+        )
+        self._update_worker = worker
+        worker.update_available.connect(self._on_update_available)
+        worker.up_to_date.connect(self._on_update_up_to_date)
+        worker.check_failed.connect(self._on_update_check_failed)
+        worker.cancelled.connect(self._on_update_check_cancelled)
+        worker.finished.connect(self._on_update_worker_finished)
+        worker.start()
+        return True
+
+    def check_for_updates_interactive(
+        self,
+        _checked: bool = False,
+        *,
+        check_func: Any = None,
+    ) -> None:
+        """Memeriksa pembaruan GitHub Releases secara manual tanpa dibatasi jadwal 24 jam."""
+        if self._update_worker is not None and self._update_worker.isRunning():
+            if self._update_check_is_automatic:
+                self._update_check_is_automatic = False
+                if hasattr(self, "act_check_updates"):
+                    self.act_check_updates.setEnabled(False)
+                    self.act_check_updates.setText("Checking for Updates...")
+                self.statusBar().showMessage("Memeriksa pembaruan HILALONE dari GitHub Releases...")
+                return
+            self.statusBar().showMessage("Pemeriksaan pembaruan sedang berjalan...", 3000)
+            return
+
+        self._update_check_is_automatic = False
+        if hasattr(self, "act_check_updates"):
+            self.act_check_updates.setEnabled(False)
+            self.act_check_updates.setText("Checking for Updates...")
+        self.statusBar().showMessage("Memeriksa pembaruan HILALONE dari GitHub Releases...")
+        self.log_manager.info(
+            "UPDATE",
+            "Periksa Pembaruan",
+            f"Memeriksa rilis stabil terbaru di GitHub Releases (versi saat ini: v{__version__})...",
+        )
+
+        worker = UpdateWorker(
+            mode=UpdateWorkerMode.CHECK_ONLY,
+            local_version=__version__,
+            check_func=check_func,
+            parent=self,
+        )
+        self._update_worker = worker
+        worker.update_available.connect(self._on_update_available)
+        worker.up_to_date.connect(self._on_update_up_to_date)
+        worker.check_failed.connect(self._on_update_check_failed)
+        worker.cancelled.connect(self._on_update_check_cancelled)
+        worker.finished.connect(self._on_update_worker_finished)
+        worker.start()
+
+    def _restore_update_check_action(self) -> None:
+        if hasattr(self, "act_check_updates"):
+            self.act_check_updates.setEnabled(True)
+            self.act_check_updates.setText("Check for Updates...")
+
+    def _open_update_dialog(self, result: UpdateCheckResult) -> None:
+        """Membuka UpdateDialog standar untuk mengunduh & memasang pembaruan."""
+        if self._is_closing or self._was_closed:
+            return
+        if self.update_dialog is not None:
+            self.update_dialog.cancel_active_download()
+            self.update_dialog.close()
+            self.update_dialog.deleteLater()
+            self.update_dialog = None
+
+        self.update_dialog = UpdateDialog(
+            result,
+            night_vision=self._is_night_vision,
+            is_frozen=bool(self._is_frozen_checker()),
+            active_processing_checker=self._has_active_processing_worker,
+            parent=self,
+        )
+        self.update_dialog.log_message_requested.connect(self._log_update_dialog_message)
+        self.update_dialog.install_close_requested.connect(self._close_for_installer_update)
+        self.update_dialog.show()
+        self.update_dialog.raise_()
+        self.update_dialog.activateWindow()
+
+    def _on_notification_update_now(self, result: UpdateCheckResult) -> None:
+        """Handler saat pengguna memilih Update Now pada dialog notifikasi."""
+        self.log_manager.info(
+            "UPDATE",
+            "Update Now Dipilih",
+            f"Membuka dialog instalasi untuk {result.release.tag_name if result.release else 'rilis baru'}.",
+        )
+        self._open_update_dialog(result)
+
+    def _on_notification_later(self, result: UpdateCheckResult) -> None:
+        """Handler saat pengguna memilih Later: tunda 24 jam & jadwalkan pengingat ulang."""
+        version_tag = (
+            result.release.version.normalized
+            if result.release is not None
+            else result.local_version
+        )
+        now_dt = self._now_provider()
+        self._update_prefs = snooze_update_reminder(
+            self._update_prefs,
+            version_tag,
+            now=now_dt,
+            reminder_interval=REMINDER_DELAY_INTERVAL,
+        )
+        self._persist_update_preferences()
+
+        if (
+            not self._is_closing
+            and not self._was_closed
+            and self._update_prefs.auto_update_check_enabled
+            and bool(self._is_frozen_checker())
+        ):
+            delay_ms = max(1000, int(REMINDER_DELAY_INTERVAL.total_seconds() * 1000))
+            self._reminder_update_timer.start(delay_ms)
+
+        self.log_manager.info(
+            "UPDATE",
+            "Pembaruan Ditunda",
+            f"Pengingat pembaruan v{version_tag} ditunda selama 24 jam.",
+        )
+
+    def _show_update_notification(self, result: UpdateCheckResult) -> None:
+        """Menampilkan dialog notifikasi update tanpa menduplikasi versi yang sedang tampil."""
+        if self._is_closing or self._was_closed or result.release is None:
+            return
+        candidate_ver = result.release.version.normalized
+
+        existing_notif = getattr(self, "update_notification_dialog", None)
+        if existing_notif is not None and existing_notif.isVisible():
+            existing_rel = existing_notif.check_result.release
+            if existing_rel is not None and existing_rel.version.normalized == candidate_ver:
+                existing_notif.raise_()
+                existing_notif.activateWindow()
+                return
+            existing_notif.blockSignals(True)
+            existing_notif.close()
+            existing_notif.deleteLater()
+            self.update_notification_dialog = None
+
+        existing_upd = getattr(self, "update_dialog", None)
+        if existing_upd is not None and existing_upd.isVisible():
+            return
+
+        self._update_prefs = record_notification_shown(self._update_prefs, candidate_ver)
+        self._persist_update_preferences()
+
+        notif = UpdateNotificationDialog(
+            result,
+            night_vision=self._is_night_vision,
+            parent=self,
+        )
+        notif.update_now_requested.connect(self._on_notification_update_now)
+        notif.later_requested.connect(self._on_notification_later)
+        self.update_notification_dialog = notif
+        notif.show()
+        notif.raise_()
+        notif.activateWindow()
+
+    def _on_update_available(self, result: UpdateCheckResult) -> None:
+        if self._is_closing or self._was_closed:
+            return
+
+        was_automatic = self._update_check_is_automatic
+        if was_automatic:
+            now_dt = self._now_provider()
+            self._update_prefs = record_check_timestamp(self._update_prefs, now=now_dt)
+            self._persist_update_preferences()
+            if result.release is None:
+                return
+            if not should_show_update_notification(
+                self._update_prefs,
+                result.release.tag_name,
+                local_version=__version__,
+                draft=result.release.draft,
+                prerelease=result.release.prerelease,
+                now=now_dt,
+            ):
+                self.log_manager.info(
+                    "UPDATE",
+                    "Notifikasi Ditunda",
+                    f"Notifikasi pembaruan v{result.release.version.normalized} masih dalam periode tunda 24 jam.",
+                )
+                return
+            self.statusBar().showMessage(result.message, 6000)
+            self.log_manager.info("UPDATE", "Pembaruan Tersedia", result.message)
+            self._show_update_notification(result)
+            return
+
+        self._restore_update_check_action()
+        self.statusBar().showMessage(result.message, 6000)
+        self.log_manager.info("UPDATE", "Pembaruan Tersedia", result.message)
+        self._open_update_dialog(result)
+
+    def _on_update_up_to_date(self, result: UpdateCheckResult) -> None:
+        if self._is_closing or self._was_closed:
+            return
+        if self._update_check_is_automatic:
+            self._update_prefs = record_check_timestamp(
+                self._update_prefs, now=self._now_provider()
+            )
+            self._persist_update_preferences()
+            self.log_manager.info("UPDATE", "Status Versi (Otomatis)", result.message)
+            return
+
+        self._restore_update_check_action()
+        self.statusBar().showMessage(result.message, 5000)
+        self.log_manager.info("UPDATE", "Status Versi", result.message)
+        QMessageBox.information(
+            self,
+            "Pembaruan HILALONE",
+            result.message,
+        )
+
+    def _on_update_check_failed(self, err_msg: str) -> None:
+        if self._is_closing or self._was_closed:
+            return
+        if self._update_check_is_automatic:
+            self._update_prefs = record_check_timestamp(
+                self._update_prefs, now=self._now_provider()
+            )
+            self._persist_update_preferences()
+            logging.warning("Pemeriksaan pembaruan otomatis gagal: %s", err_msg)
+            self.log_manager.warning("UPDATE", "Cek Pembaruan Otomatis Gagal", err_msg)
+            return
+
+        self._restore_update_check_action()
+        self.statusBar().showMessage(f"Pemeriksaan pembaruan gagal: {err_msg}", 6000)
+        self.log_manager.warning("UPDATE", "Gagal Memeriksa Pembaruan", err_msg)
+        QMessageBox.warning(
+            self,
+            "Gagal Memeriksa Pembaruan",
+            err_msg,
+        )
+
+    def _on_update_check_cancelled(self, msg: str) -> None:
+        if self._is_closing or self._was_closed:
+            return
+        if self._update_check_is_automatic:
+            return
+        self._restore_update_check_action()
+        self.statusBar().showMessage(msg, 4000)
+
+    def _on_update_worker_finished(self) -> None:
+        worker = self.sender()
+        if isinstance(worker, UpdateWorker):
+            worker.wait(500)
+            if self._update_worker is worker:
+                self._update_worker = None
+            worker.deleteLater()
+
+    def _close_for_installer_update(self) -> None:
+        """Menutup jendela utama secara normal agar installer Inno Setup dapat berjalan."""
+        self.close()
+
     def closeEvent(self, event: Any) -> None:  # noqa: N802
-        """Menyimpan preferensi tema dan direktori kerja terakhir sebelum jendela ditutup."""
+        """Menyimpan preferensi tema dan menghentikan timer/worker pembaruan dengan aman."""
+        self._is_closing = True
+        self._was_closed = True
+        if getattr(self, "_startup_update_timer", None) is not None:
+            self._startup_update_timer.stop()
+        if getattr(self, "_reminder_update_timer", None) is not None:
+            self._reminder_update_timer.stop()
+
+        notif = getattr(self, "update_notification_dialog", None)
+        if notif is not None:
+            notif.blockSignals(True)
+            notif.close()
+            self.update_notification_dialog = None
+
+        worker = getattr(self, "_update_worker", None)
+        if worker is not None:
+            if worker.isRunning():
+                worker.request_cancel()
+            worker.wait(2000)
+        if getattr(self, "update_dialog", None) is not None:
+            self.update_dialog.cancel_active_download()
+            self.update_dialog.close()
         self._save_user_preferences()
         super().closeEvent(event)

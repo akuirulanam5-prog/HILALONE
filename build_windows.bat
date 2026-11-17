@@ -55,6 +55,9 @@ if not exist "%SPEC_FILE%" (
 )
 for %%F in (
     "assets\branding\hilalone_app_icon.ico"
+    "assets\branding\hilalone_app_icon_night_red.ico"
+    "assets\branding\hilalone_icon_standard.png"
+    "assets\branding\hilalone_icon_night_red.png"
     "assets\branding\hilalone_logo_standard.png"
     "assets\branding\hilalone_logo_night_red_separate.png"
     "assets\branding\hilalone_logo_night_red.png"

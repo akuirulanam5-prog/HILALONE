@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -30,12 +31,16 @@ LOGO_NIGHT_RED_PREFERRED = "hilalone_logo_night_red_separate.png"
 LOGO_NIGHT_RED_FALLBACK = "hilalone_logo_night_red.png"
 LOGO_LEGACY = "hilalone_logo.png"
 
+COMPACT_ICON_STANDARD = "hilalone_icon_standard.png"
+COMPACT_ICON_NIGHT_RED = "hilalone_icon_night_red.png"
+
 # Proporsi diameter isi lingkaran terhadap sisi kanvas persegi agar ukuran visual logo konsisten antar tema
 STANDARD_LOGO_FILL_RATIO = 0.92
 
 # Cache aset di memori agar tidak membaca disk atau menskalakan ulang secara berlebihan
 _APP_ICON_CACHE: dict[bool, QIcon] = {}
 _RAW_LOGO_PIXMAP_CACHE: dict[bool, QPixmap] = {}
+_RAW_COMPACT_LOGO_CACHE: dict[bool, QPixmap] = {}
 _SCALED_HEADER_LOGO_CACHE: dict[tuple[bool, int], QPixmap] = {}
 _MISSING_WARNED_PATHS: set[str] = set()
 
@@ -52,6 +57,7 @@ def clear_resource_cache() -> None:
     """Membersihkan cache ikon dan logo di memori (berguna untuk pengujian unit)."""
     _APP_ICON_CACHE.clear()
     _RAW_LOGO_PIXMAP_CACHE.clear()
+    _RAW_COMPACT_LOGO_CACHE.clear()
     _SCALED_HEADER_LOGO_CACHE.clear()
     _MISSING_WARNED_PATHS.clear()
 
@@ -173,9 +179,27 @@ def get_logo_path(night_vision: bool = False) -> Path:
     return resolved
 
 
+def get_compact_logo_path(night_vision: bool = False) -> Path:
+    """Mengembalikan path ke berkas ikon ringkas tanpa teks (.png) untuk ukuran kecil (<=96 px)."""
+    if night_vision:
+        candidates = (
+            COMPACT_ICON_NIGHT_RED,
+            COMPACT_ICON_STANDARD,
+            LOGO_NIGHT_RED_PREFERRED,
+            LOGO_STANDARD,
+        )
+    else:
+        candidates = (COMPACT_ICON_STANDARD, LOGO_STANDARD, LOGO_LEGACY)
+
+    resolved = _resolve_branding_candidate(candidates)
+    if not resolved.exists():
+        _warn_missing_asset_once("compact_icon_night_red" if night_vision else "compact_icon_standard", resolved)
+    return resolved
+
+
 def get_header_logo_path(night_vision: bool = False) -> Path:
-    """Alias kompatibilitas untuk get_logo_path."""
-    return get_logo_path(night_vision=night_vision)
+    """Mengembalikan path ke ikon ringkas untuk area header aplikasi."""
+    return get_compact_logo_path(night_vision=night_vision)
 
 
 def _normalize_logo_pixmap(pixmap: QPixmap) -> QPixmap:
@@ -234,44 +258,70 @@ def _normalize_logo_pixmap(pixmap: QPixmap) -> QPixmap:
     return QPixmap.fromImage(normalized_img)
 
 
-def get_logo_pixmap(night_vision: bool = False) -> QPixmap:
-    """Memuat dan meng-cache QPixmap logo resmi HILALONE pada resolusi penuh (dengan transparansi)."""
-    if night_vision in _RAW_LOGO_PIXMAP_CACHE:
-        cached = _RAW_LOGO_PIXMAP_CACHE[night_vision]
+def _load_normalized_pixmap(
+    cache: dict[bool, QPixmap],
+    path_resolver: Callable[[bool], Path],
+    asset_label: str,
+    night_vision: bool = False,
+) -> QPixmap:
+    """Memuat, menormalisasi padding, dan meng-cache QPixmap branding sesuai tema aktif."""
+    if night_vision in cache:
+        cached = cache[night_vision]
         if not cached.isNull():
             return cached
 
-    logo_path = get_logo_path(night_vision=night_vision)
-    if not logo_path.exists():
-        _warn_missing_asset_once("logo_night_red" if night_vision else "logo_standard", logo_path)
+    asset_path = path_resolver(night_vision)
+    if not asset_path.exists():
+        _warn_missing_asset_once(asset_label, asset_path)
         return QPixmap()
 
-    pixmap = QPixmap(str(logo_path))
+    pixmap = QPixmap(str(asset_path))
     if pixmap.isNull():
-        logger.warning("Gagal memuat berkas logo dari: %s", logo_path)
+        logger.warning("Gagal memuat berkas branding %s dari: %s", asset_label, asset_path)
         return QPixmap()
 
     pixmap = _normalize_logo_pixmap(pixmap)
-    _RAW_LOGO_PIXMAP_CACHE[night_vision] = pixmap
+    cache[night_vision] = pixmap
     return pixmap
 
 
+def get_logo_pixmap(night_vision: bool = False) -> QPixmap:
+    """Memuat dan meng-cache QPixmap logo lengkap resmi HILALONE untuk tampilan besar."""
+    label = "logo_night_red" if night_vision else "logo_standard"
+    return _load_normalized_pixmap(
+        _RAW_LOGO_PIXMAP_CACHE,
+        lambda nv: get_logo_path(night_vision=nv),
+        label,
+        night_vision=night_vision,
+    )
+
+
+def get_compact_logo_pixmap(night_vision: bool = False) -> QPixmap:
+    """Memuat dan meng-cache QPixmap ikon ringkas tanpa teks untuk ukuran kecil/dialog identitas."""
+    label = "compact_icon_night_red" if night_vision else "compact_icon_standard"
+    return _load_normalized_pixmap(
+        _RAW_COMPACT_LOGO_CACHE,
+        lambda nv: get_compact_logo_path(night_vision=nv),
+        label,
+        night_vision=night_vision,
+    )
+
+
 def get_header_logo_pixmap(target_height: int = 44, night_vision: bool = False) -> QPixmap:
-    """Memuat dan menskalakan logo header dengan rasio aspek tetap serta caching per tema/ukuran.
+    """Memuat dan menskalakan ikon header dengan rasio aspek tetap serta caching per tema/ukuran.
 
     Parameter:
     -----------
     target_height : int
-        Tinggi target dalam piksel (default 44 px, proporsional dengan judul dan subtitle).
+        Tinggi target dalam piksel (default 44 px, memakai varian ikon tanpa teks agar tetap tajam).
     night_vision : bool
-        Jika True, menggunakan aset logo resmi Night Vision Red (`hilalone_logo_night_red_separate.png`
-        atau fallback `hilalone_logo_night_red.png`).
+        Jika True, menggunakan ikon ringkas tema Night Vision Red.
     """
     cache_key = (bool(night_vision), int(target_height))
     if cache_key in _SCALED_HEADER_LOGO_CACHE:
         return _SCALED_HEADER_LOGO_CACHE[cache_key]
 
-    raw_pixmap = get_logo_pixmap(night_vision=night_vision)
+    raw_pixmap = get_compact_logo_pixmap(night_vision=night_vision)
     if raw_pixmap.isNull():
         return QPixmap()
 

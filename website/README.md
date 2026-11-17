@@ -1,6 +1,6 @@
 # Website Resmi HILALONE
 
-Website resmi, dokumentasi produk singkat, dan pusat distribusi installer Windows untuk **HILALONE — Automated Hilal Image Processing** (`v1.0.0`).
+Website resmi, dokumentasi produk singkat, dan pusat distribusi installer Windows untuk **HILALONE — Automated Hilal Image Processing**.
 
 ---
 
@@ -19,10 +19,16 @@ Website resmi, dokumentasi produk singkat, dan pusat distribusi installer Window
 ```text
 website/
 ├─ public/
-│  ├─ branding/          # Turunan WebP/PNG logo Standard Dark & Night Vision Red
-│  ├─ screenshots/       # Tangkapan layar nyata PySide6 HILALONE v1.0.0 (1600w & 800w WebP)
+│  ├─ branding/          # Turunan WebP/PNG ikon & logo Standard Dark & Night Vision Red
+│  ├─ screenshots/       # Tangkapan layar PySide6 HILALONE (1600w & 800w WebP)
 │  ├─ apple-touch-icon.png
+│  ├─ favicon-16x16.png
+│  ├─ favicon-32x32.png
 │  ├─ favicon.ico
+│  ├─ favicon.svg
+│  ├─ icon-192.png
+│  ├─ icon-512.png
+│  ├─ manifest.json
 │  └─ og-image.png
 ├─ src/
 │  ├─ components/        # Navbar, HeroVisualShowcase, ScreenshotLightbox, SectionHeader

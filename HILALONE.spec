@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""Konfigurasi PyInstaller (mode ONE-DIR) untuk HILALONE v1.0.0 Windows Desktop."""
+"""Konfigurasi PyInstaller (mode ONE-DIR) untuk HILALONE Windows Desktop."""
 
 from pathlib import Path
 

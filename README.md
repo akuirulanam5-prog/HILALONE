@@ -1,6 +1,6 @@
 # HILALONE — Automated Hilal Image Processing
 
-**HILALONE** (v1.0.0) adalah aplikasi desktop Windows berbasis Python dan PySide6 untuk pengolahan citra pengamatan hilal dan bulan sabit muda secara otomatis, ilmiah, dan deterministik dengan prinsip *"Enhance the Signal, Never Invent the Signal"*.
+**HILALONE** (v1.1.1) adalah aplikasi desktop Windows berbasis Python dan PySide6 untuk pengolahan citra pengamatan hilal dan bulan sabit muda secara otomatis, ilmiah, dan deterministik dengan prinsip *"Enhance the Signal, Never Invent the Signal"*.
 
 ---
 
@@ -23,7 +23,7 @@
 - **Antarmuka Desktop Astronomi (PySide6)**:
   - *Image Viewer* interaktif (zoom fit/1:1, pan, rotasi, flip horizontal/vertikal, serta mode **Normal / Negative View**).
   - Panel kontrol bertingkat berbasis *Collapsible Accordion* (`Input & Sequence`, `Automated Image Processing`, `Image Information`, `Sensor Information`).
-  - Jendela **Histogram**, **Kurva**, **Info / Header FITS**, dan **Console Log**.
+  - Jendela **Histogram**, **Kurva**, **Info / Header FITS**, **Console Log**, serta menu **Help** (**Check for Updates**, **Report an Issue**, **About HILALONE**) yang terintegrasi dengan GitHub Releases.
   - Dukungan dua tema antarmuka: **Standard Dark Theme** dan **Night Vision Red Theme** beserta aset branding resmi.
 
 ---
@@ -32,7 +32,9 @@
 
 ```text
 HILALONE/
-├─ assets/branding/       # Ikon aplikasi (.ico) dan logo Standard / Night Vision Red (.png)
+├─ assets/
+│  ├─ branding/           # Ikon ringkas, ikon (.ico), dan logo lengkap Standard / Night Vision Red
+│  └─ hilalone-icons/     # Paket sumber resmi ikon & logo (SVG, PNG, ICO, Web)
 ├─ docs/                  # Dokumen spesifikasi, roadmap, gambaran proyek, & laporan audit
 ├─ hooks/                 # Hook PyInstaller kustom (astropy)
 ├─ src/hilalone/
@@ -40,6 +42,7 @@ HILALONE/
 │  ├─ input_manager/      # Adapter pembacaaan FITS, TIFF, RAW, SER, Video, sequence manager
 │  ├─ output_manager/     # Penulis hasil linear & visual terpisah + riwayat pemrosesan
 │  ├─ processing/         # Pipeline otomatis, stacking, flat calibration, background, stretch
+│  ├─ updates/            # Pemeriksa pembaruan GitHub Releases, verifikasi SHA-256 & worker
 │  └─ main.py             # Entry point aplikasi desktop
 ├─ tests/                 # Pengujian unit & UI (pytest) menggunakan data sintetis
 ├─ HILALONE.spec          # Konfigurasi build Windows executable (PyInstaller ONE-DIR)
@@ -117,4 +120,5 @@ Dokumentasi lengkap proses build, uji distribusi bersih, dan pembuatan installer
 - [docs/software_requirements.md](docs/software_requirements.md) — Spesifikasi kebutuhan fungsional & non-fungsional
 - [docs/development_roadmap.md](docs/development_roadmap.md) — Tahapan pengembangan MVP 1.0
 - [docs/HILALONE_MVP1_QUALITY_AUDIT.md](docs/HILALONE_MVP1_QUALITY_AUDIT.md) — Audit kualitas dan validasi ilmiah
+- [docs/update_and_release_guide.md](docs/update_and_release_guide.md) — Arsitektur sistem pembaruan desktop & checklist rilis developer
 - [BUILD_README.md](BUILD_README.md) — Panduan build executable Windows dan installer

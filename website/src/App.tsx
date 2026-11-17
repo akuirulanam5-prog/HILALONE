@@ -14,19 +14,19 @@ import { WorkflowSection } from "./sections/WorkflowSection";
 export function App() {
   return (
     <div className="app-shell">
-      <a className="skip-link" href="#konten-utama">
+      <a className="skip-link visually-hidden" href="#konten-judul">
         Langsung ke konten utama
       </a>
       <Navbar />
       <main id="konten-utama">
         <HeroSection />
-        <AboutSection />
         <FeaturesSection />
-        <PreviewGallerySection />
         <WorkflowSection />
+        <PreviewGallerySection />
+        <AboutSection />
         <ScientificIntegritySection />
-        <RoadmapSection />
         <SpecificationsSection />
+        <RoadmapSection />
         <DownloadSection />
         <FaqSection />
       </main>

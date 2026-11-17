@@ -1,52 +1,89 @@
 import { AlertTriangle, BookOpenCheck } from "lucide-react";
-import { SectionHeader } from "../components/SectionHeader";
 import { ABOUT_PILLARS } from "../data/hilaloneData";
+import { siteConfig } from "../data/siteConfig";
+
+const PROOF_METRICS = [
+  {
+    value: "float32",
+    label: "Presisi internal linear penuh hingga tahap ekspor FITS/TIFF ilmiah.",
+  },
+  {
+    value: "251 Lulus",
+    label: "Unit test offscreen Pytest memakai data sintetis (3 skipped krn sampel eksternal).",
+  },
+  {
+    value: "5 Cabang",
+    label: "Pemisahan cabang data A–F antara master linear dan pratinjau visual.",
+  },
+] as const;
 
 export function AboutSection() {
   return (
     <section id="tentang" className="section section--alt">
-      <div className="container about-layout">
-        <div>
-          <SectionHeader
-            eyebrow="Tentang HILALONE"
-            title="Alur Olah Citra Rukyat yang Transparan dan Dapat Diulang"
-            subtitle="Dirancang untuk menjembatani perangkat lunak astronomi umum dengan kebutuhan praktis pengamatan hilal serta pembelajaran ilmu falak."
-            icon={<BookOpenCheck size={14} aria-hidden="true" />}
-          />
+      <div className="container">
+        <div className="section-panel">
+          <div className="about-asymmetric">
+            <dl className="about-metrics" aria-label="Fakta teknis terverifikasi HILALONE">
+              {PROOF_METRICS.map((metric) => (
+                <div key={metric.value} className="about-metric-item">
+                  <dt className="about-metric-item__val">{metric.value}</dt>
+                  <dd className="about-metric-item__desc">{metric.label}</dd>
+                </div>
+              ))}
+            </dl>
 
-          <p className="card__text" style={{ fontSize: "0.98rem", marginBottom: "0.9rem" }}>
-            Pengamatan bulan sabit muda sering berhadapan dengan langit senja yang
-            sangat terang, gradien pencahayaan tajam, serta kontras sabit yang tipis.
-            Pengeditan foto biasa berisiko memampatkan data ke 8-bit terlalu dini atau
-            mengaburkan riwayat parameter pemrosesan.
-          </p>
+            <figure className="about-focal">
+              <img
+                src="/screenshots/histogram-window-800.webp"
+                alt="Jendela Histogram dan statistik citra HILALONE menampilkan distribusi intensitas data uji sintetis"
+                width={800}
+                height={450}
+                loading="lazy"
+              />
+              <figcaption className="about-focal__caption">
+                Jendela Histogram &amp; statistik intensitas pada data uji sintetis.
+              </figcaption>
+            </figure>
 
-          <p className="card__text" style={{ fontSize: "0.98rem" }}>
-            HILALONE hadir dengan pipeline berbasis Python &amp; PySide6 yang memproses
-            nilai piksel secara linear dalam presisi <code>float32</code>, menjaga kanal
-            asli citra, serta memisahkan master ilmiah dari pratinjau tampilan layar.
-          </p>
+            <div className="about-narrative">
+              <div className="eyebrow">
+                <BookOpenCheck size={14} aria-hidden="true" />
+                <span>Tentang HILALONE</span>
+              </div>
+              <h2 className="section-title">
+                Alur Olah Citra Rukyat yang Transparan dan Dapat Diulang
+              </h2>
+              <p className="about-lead">
+                Pengamatan bulan sabit muda berhadapan dengan langit senja yang terang, gradien
+                pencahayaan tajam, serta kontras sabit tipis. Pengeditan foto umum berisiko
+                memampatkan data ke 8-bit terlalu dini atau menghilangkan riwayat parameter.
+              </p>
+              <p className="card__text">
+                HILALONE memproses nilai piksel secara linear dalam presisi <code>float32</code>,
+                menjaga kanal asli mono maupun RGB, dan memisahkan master ilmiah dari pratinjau
+                layar.
+              </p>
 
-          <div className="callout-box">
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "0.6rem" }}>
-              <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: 2 }} aria-hidden="true" />
-              <div>
-                <strong>Batasan Jujur MVP 1.0:</strong> HILALONE v1.0.0 merupakan
-                aplikasi pengolahan citra astronomi. Versi ini <strong>belum</strong>{" "}
-                memiliki fitur deteksi hilal otomatis, analisis kuantitatif visibilitas,
-                maupun penentuan keberhasilan rukyat.
+              <div className="notice-banner" role="note">
+                <AlertTriangle size={18} className="notice-banner__icon" aria-hidden="true" />
+                <div>
+                  <strong>Batasan Jujur MVP 1.0 (v{siteConfig.version}):</strong> HILALONE merupakan
+                  perangkat lunak pengolahan citra astronomi dan <strong>belum</strong> memiliki
+                  fitur deteksi hilal otomatis, analisis kuantitatif visibilitas, ataupun penentuan
+                  keberhasilan rukyat.
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <div className="grid-2">
-          {ABOUT_PILLARS.map((pillar) => (
-            <article key={pillar.title} className="card">
-              <h3 className="card__title">{pillar.title}</h3>
-              <p className="card__text">{pillar.description}</p>
-            </article>
-          ))}
+          <dl className="about-pillars-grid">
+            {ABOUT_PILLARS.map((pillar) => (
+              <div key={pillar.title} className="about-pillar-item">
+                <dt className="card__title">{pillar.title}</dt>
+                <dd className="card__text">{pillar.description}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
       </div>
     </section>

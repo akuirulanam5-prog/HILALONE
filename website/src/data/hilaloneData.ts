@@ -1,3 +1,5 @@
+import { siteConfig } from "./siteConfig";
+
 export type VerificationStatus = "TERUJI" | "PARSIAL" | "DIRENCANAKAN";
 
 export type FeatureCategory =
@@ -93,8 +95,26 @@ export interface FaqItem {
 export const HERO_HIGHLIGHTS = [
   { label: "Presisi Internal", value: "float32 Linear" },
   { label: "Profil Otomatis", value: "Basic · Medium · High" },
-  { label: "Unit Test Pytest", value: "227 Passed" },
+  { label: "Unit Test Pytest", value: "251 Passed" },
   { label: "Geometri Stacking", value: "Tanpa Warping / Align" },
+] as const;
+
+export const HERO_PILLARS = [
+  {
+    id: "readonly",
+    title: "Sumber Read-Only & float32",
+    summary: "Berkas observasi dibuka baca-saja dan diproses linear penuh tanpa kuantisasi 8-bit dini.",
+  },
+  {
+    id: "no-align",
+    title: "Stacking Tanpa Alignment Paksa",
+    summary: "Memvalidasi ukuran serta kanal mono/RGB dan menggabungkan frame tanpa warping geometris.",
+  },
+  {
+    id: "split-output",
+    title: "Master Linear & Visual Terpisah",
+    summary: "Menyimpan FITS/TIFF float32 terpisah dari hasil stretch visual serta mode Night Vision Red.",
+  },
 ] as const;
 
 export const ABOUT_PILLARS = [
@@ -234,8 +254,8 @@ export const FEATURES: readonly FeatureItem[] = [
     name: "Automatic Image Stacking",
     category: "Kalibrasi & Stacking",
     iconName: "Layers",
-    description: "Mean, Sigma-Clipped Mean, dan Quality-Weighted Robust stacking per-strip plus pengukuran pergeseran baca-saja (Phase Correlation FFT).",
-    benefit: "Menurunkan noise acak latar langit sambil menolak frame campur mono/RGB dan tanpa alignment paksa.",
+    description: "Mean, Sigma-Clipped Mean, dan Quality-Weighted Robust stacking per-strip tanpa warping atau alignment geometris otomatis.",
+    benefit: "Menurunkan derau acak latar langit sambil menolak sequence campuran mono/RGB secara eksplisit.",
     status: "TERUJI",
   },
   {
@@ -319,9 +339,9 @@ export const SCREENSHOTS: readonly ScreenshotItem[] = [
     category: "Antarmuka Awal",
     src1600: "/screenshots/main-empty-dark-1600.webp",
     src800: "/screenshots/main-empty-dark-800.webp",
-    alt: "Tampilan utama HILALONE v1.0.0 mode Standard Dark dengan logo di tengah Image Viewer dan panel accordion kanan.",
+    alt: "Tampilan utama HILALONE v1.1.1 mode Standard Dark dengan ikon dan logo resmi baru serta menu Help.",
     caption:
-      "Tampilan awal HILALONE v1.0.0 dalam tema Standard Dark: branding resmi di tengah viewport, toolbar viewer di bawah, dan panel inspeksi accordion di sisi kanan.",
+      "Tampilan awal HILALONE v1.1.1 dalam tema Standard Dark: ikon ringkas baru di header, logo lengkap resmi di tengah viewport, menu Help (Update System), dan panel inspeksi kanan.",
     isSyntheticSample: false,
   },
   {
@@ -330,9 +350,9 @@ export const SCREENSHOTS: readonly ScreenshotItem[] = [
     category: "Pipeline Otomatis",
     src1600: "/screenshots/processing-result-dark-1600.webp",
     src800: "/screenshots/processing-result-dark-800.webp",
-    alt: "Hasil pemrosesan otomatis profil Medium pada sequence sintetis di HILALONE dengan ringkasan metode stacking dan statistik frame.",
+    alt: "Hasil pemrosesan otomatis profil Basic standar pada sequence sintetis 8 frame di HILALONE.",
     caption:
-      "Antarmuka hasil pemrosesan otomatis profil Medium (8 frame). Catatan jujur: citra di viewer merupakan data uji sintetis (gradien langit, vignetting, dan sabit buatan), bukan foto observasi nyata.",
+      "Antarmuka hasil pemrosesan otomatis profil Basic standar (8 frame). Catatan jujur: citra di viewer merupakan data uji sintetis (gradien langit, vignetting, dan sabit buatan), bukan foto observasi nyata.",
     isSyntheticSample: true,
   },
   {
@@ -385,9 +405,9 @@ export const SCREENSHOTS: readonly ScreenshotItem[] = [
     category: "Tema Astronomi",
     src1600: "/screenshots/main-empty-night-1600.webp",
     src800: "/screenshots/main-empty-night-800.webp",
-    alt: "Tampilan awal HILALONE v1.0.0 dalam mode Night Vision Red dengan logo merah khusus.",
+    alt: "Tampilan awal HILALONE v1.1.1 dalam mode Night Vision Red dengan varian logo dan ikon merah baru.",
     caption:
-      "Kondisi awal aplikasi pada tema Night Vision Red sebelum citra dibuka, menampilkan logo resmi Night Vision Red.",
+      "Kondisi awal aplikasi pada tema Night Vision Red sebelum citra dibuka, menampilkan varian logo dan ikon resmi baru bertema merah observasi malam.",
     isSyntheticSample: false,
   },
 ];
@@ -406,12 +426,12 @@ export const WORKFLOW_STEPS: readonly WorkflowStep[] = [
   {
     stepNumber: "02",
     code: "SEQUENCE VALIDATION",
-    title: "Cek Kompatibilitas & Pergeseran",
+    title: "Validasi Kompatibilitas Sequence",
     modeTag: "Multi-Frame / Video / SER",
-    summary: "Memeriksa ukuran, jumlah kanal, orientasi, dan mengukur translasi antar frame secara baca-saja.",
+    summary: "Memeriksa kesamaan ukuran, orientasi, jumlah kanal, dan menolak sequence campuran mono/RGB.",
     technicalDetail:
-      "Sequence campuran mono dan RGB ditolak. Pergeseran (dx, dy) diukur terhadap frame referensi memakai Phase Correlation 2D FFT (ambang 1,0 px) untuk status OK / MELEBIHI_AMBANG / INDETERMINATE tanpa alignment otomatis.",
-    outputs: "PreStackValidationReport & PositionStabilityReport",
+      "Validation gate menolak pencampuran kanal mono dan RGB serta menandai frame bermasalah. Utilitas estimasi translasi FFT tersedia di modul validator, namun precheck posisi dinonaktifkan secara default di pipeline v1.x tanpa alignment otomatis.",
+    outputs: "SequenceCompatibilityReport & indeks frame kompatibel",
   },
   {
     stepNumber: "03",
@@ -430,7 +450,7 @@ export const WORKFLOW_STEPS: readonly WorkflowStep[] = [
     modeTag: "Opsional",
     summary: "Aktif hanya jika opsi Flat Calibration dicentang dan Master Flat kompatibel tersedia.",
     technicalDetail:
-      "Memeriksa kecocokan resolusi, kanal, dan orientasi Master Flat (single atau sequence), menormalkan flat dengan median, lalu membagi sinyal light dengan proteksi nilai mendekati nol. Tanpa dark/bias pada MVP 1.0.",
+      "Memeriksa kecocokan dimensi dan kanal Master Flat saat operasi berlangsung, menormalkan flat dengan median, lalu membagi sinyal light dengan proteksi nilai mendekati nol. Tanpa dark/bias pada MVP 1.0.",
     outputs: "calibrated_data (float32) + FlatCalibrationReport",
   },
   {
@@ -535,15 +555,15 @@ export const ROADMAP_STAGES: readonly RoadmapStage[] = [
     id: "mvp-1",
     stage: "MVP 1.0",
     title: "Automated Astronomical Image Processing",
-    statusLabel: "Diimplementasikan · Build v1.0.0 Tahap Uji Distribusi",
+    statusLabel: `Aktif · Rilis v${siteConfig.version}`,
     statusKind: "active",
     summary:
-      "Fokus pada pembacaan multi-format ilmiah, validasi kompatibilitas, kalibrasi flat opsional, stacking tanpa alignment, ekstraksi latar, enhancement/stretch terpisah, dan antarmuka desktop Windows.",
+      "Fokus pada pembacaan multi-format ilmiah, validasi kompatibilitas, kalibrasi flat opsional, stacking tanpa alignment, ekstraksi latar, enhancement/stretch terpisah, dan desktop updater.",
     items: [
       { label: "Reader FITS, TIFF, Video (MP4/MOV/AVI), SER, PNG/JPEG & Pipeline", badge: "Teruji" },
       { label: "RAW Kamera Reader (LibRaw / rawpy)", badge: "Parsial (belum uji RAW kamera asli)" },
-      { label: "PyInstaller ONE-DIR Build (v1.0.0)", badge: "Teruji di mesin dev terisolasi" },
-      { label: "Installer Windows (HILALONE_Setup_v1.0.exe)", badge: "Tersedia (v1.0.0)" },
+      { label: `PyInstaller ONE-DIR & Desktop Auto-Updater (v${siteConfig.version})`, badge: "251 Passed" },
+      { label: `Installer Windows (${siteConfig.installerFilename})`, badge: `Tersedia (v${siteConfig.version})` },
     ],
   },
   {
@@ -571,7 +591,10 @@ export const ROADMAP_STAGES: readonly RoadmapStage[] = [
     items: [
       { label: "Bantuan deteksi kandidat sabit hilal berbasis riset", badge: "Planned" },
       { label: "Fitur riset lanjutan & integrasi alur pengamatan terstandar", badge: "Planned" },
-      { label: "Catatan: Belum tersedia di v1.0.0 — tidak mengklaim penentuan visibilitas otomatis", badge: "Penting" },
+      {
+        label: `Catatan: Belum tersedia di v${siteConfig.version} — tidak mengklaim penentuan visibilitas otomatis`,
+        badge: "Penting",
+      },
     ],
   },
 ];
@@ -644,7 +667,7 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
     id: "what-is-stacking",
     question: "Apa kegunaan Image Stacking?",
     answer:
-      "Image Stacking menggabungkan banyak frame pengamatan yang kompatibel (ukuran dan kanal sama) untuk menurunkan derau acak latar langit sehingga sinyal sabit yang redup lebih bersih. Pada MVP 1.0, stacking dijalankan tanpa alignment/warping paksa dan pergeseran diukur secara baca-saja.",
+      "Image Stacking menggabungkan banyak frame pengamatan yang kompatibel (ukuran dan kanal sama) untuk menurunkan derau acak latar langit sehingga sinyal sabit yang redup lebih bersih. Pada MVP 1.0, stacking dijalankan tanpa alignment atau warping geometris paksa.",
   },
   {
     id: "what-is-flat",
@@ -674,7 +697,7 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
     id: "how-to-download",
     question: "Bagaimana mengunduh aplikasi?",
     answer:
-      "Anda dapat mengunduh paket installer resmi Windows (HILALONE_Setup_v1.0.exe) secara langsung melalui tombol Unduh di bagian Distribusi Aplikasi pada halaman ini atau melalui halaman GitHub Releases resmi beserta verifikasi checksum SHA-256.",
+      `Anda dapat mengunduh paket installer resmi Windows (${siteConfig.installerFilename}) secara langsung melalui tombol Unduh di bagian Distribusi Aplikasi pada halaman ini atau melalui halaman GitHub Releases resmi beserta verifikasi checksum SHA-256.`,
   },
   {
     id: "report-bugs",

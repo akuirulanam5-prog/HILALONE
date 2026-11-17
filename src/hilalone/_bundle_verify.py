@@ -21,7 +21,12 @@ from astropy.io import fits
 
 from hilalone import APP_NAME, __version__
 from hilalone.gui.main_window import MainWindow
-from hilalone.gui.resources import get_app_icon, get_logo_pixmap, get_project_root
+from hilalone.gui.resources import (
+    get_app_icon,
+    get_compact_logo_pixmap,
+    get_logo_pixmap,
+    get_project_root,
+)
 from hilalone.processing import (
     PreviewMode,
     ProcessingPipelineOrchestrator,
@@ -85,9 +90,24 @@ def run_bundle_verification(work_dir: Path, app: QApplication) -> int:
         # 2-4. Logo & Tema
         logo_std = get_logo_pixmap(False)
         logo_nv = get_logo_pixmap(True)
+        icon_std = get_compact_logo_pixmap(False)
+        icon_nv = get_compact_logo_pixmap(True)
         ico = get_app_icon()
-        if not logo_std.isNull() and not logo_nv.isNull() and not ico.isNull():
-            record("logo_and_icon", "PASS", f"std={logo_std.size().toTuple()}, nv={logo_nv.size().toTuple()}")
+        ico_nv = get_app_icon(True)
+        if (
+            not logo_std.isNull()
+            and not logo_nv.isNull()
+            and not icon_std.isNull()
+            and not icon_nv.isNull()
+            and not ico.isNull()
+            and not ico_nv.isNull()
+        ):
+            record(
+                "logo_and_icon",
+                "PASS",
+                f"logo_std={logo_std.size().toTuple()}, logo_nv={logo_nv.size().toTuple()}, "
+                f"icon_std={icon_std.size().toTuple()}, icon_nv={icon_nv.size().toTuple()}",
+            )
         else:
             record("logo_and_icon", "FAIL", "Salah satu aset logo/ikon bernilai null")
 
