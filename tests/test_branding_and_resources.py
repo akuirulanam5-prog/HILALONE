@@ -19,6 +19,8 @@ from hilalone.gui.resources import (
     clear_resource_cache,
     get_app_icon,
     get_app_icon_path,
+    get_compact_logo_path,
+    get_compact_logo_pixmap,
     get_header_logo_path,
     get_header_logo_pixmap,
     get_logo_path,
@@ -45,10 +47,25 @@ def test_resource_paths_exist() -> None:
     assert icon_path.name == "hilalone_app_icon.ico"
     assert icon_path.stat().st_size > 0
 
-    logo_path = get_header_logo_path()
-    assert logo_path.exists(), f"Berkas logo standar tidak ditemukan di: {logo_path}"
-    assert logo_path.name == "hilalone_logo_standard.png"
-    assert logo_path.stat().st_size > 0
+    night_icon_path = get_app_icon_path(night_vision=True)
+    assert night_icon_path.exists(), f"Berkas ikon Night Vision tidak ditemukan di: {night_icon_path}"
+    assert night_icon_path.name == "hilalone_app_icon_night_red.ico"
+    assert night_icon_path.stat().st_size > 0
+
+    header_logo_path = get_header_logo_path()
+    assert header_logo_path.exists(), f"Berkas ikon header tidak ditemukan di: {header_logo_path}"
+    assert header_logo_path.name == "hilalone_icon_standard.png"
+    assert header_logo_path.stat().st_size > 0
+
+    compact_nv_path = get_compact_logo_path(night_vision=True)
+    assert compact_nv_path.exists(), f"Berkas ikon Night Vision tidak ditemukan di: {compact_nv_path}"
+    assert compact_nv_path.name == "hilalone_icon_night_red.png"
+    assert compact_nv_path.stat().st_size > 0
+
+    full_logo_path = get_logo_path()
+    assert full_logo_path.exists(), f"Berkas logo lengkap tidak ditemukan di: {full_logo_path}"
+    assert full_logo_path.name == "hilalone_logo_standard.png"
+    assert full_logo_path.stat().st_size > 0
 
     night_logo_path = get_logo_path(night_vision=True)
     assert night_logo_path.exists(), f"Berkas logo Night Vision tidak ditemukan di: {night_logo_path}"
@@ -57,15 +74,16 @@ def test_resource_paths_exist() -> None:
 
 
 def test_branding_png_transparency() -> None:
-    """Memastikan kedua logo PNG memiliki kanal alfa dan area sudut luar lingkaran transparan."""
-    for nv in (False, True):
-        path = get_logo_path(night_vision=nv)
-        img = Image.open(path)
-        assert img.mode == "RGBA"
-        w, h = img.size
-        assert w == h
-        assert img.getpixel((0, 0))[3] == 0
-        assert img.getpixel((w - 1, 0))[3] == 0
+    """Memastikan seluruh aset PNG branding memiliki kanal alfa dan sudut luar transparan."""
+    for path_getter in (get_logo_path, get_compact_logo_path):
+        for nv in (False, True):
+            path = path_getter(night_vision=nv)
+            img = Image.open(path)
+            assert img.mode == "RGBA"
+            w, h = img.size
+            assert w == h
+            assert img.getpixel((0, 0))[3] == 0
+            assert img.getpixel((w - 1, 0))[3] == 0
 
 
 def test_resource_path_helper_resolutions() -> None:
@@ -98,11 +116,18 @@ def test_get_header_and_raw_logo_pixmap(qapp: QApplication) -> None:
     clear_resource_cache()
     raw_std = get_logo_pixmap(night_vision=False)
     raw_nv = get_logo_pixmap(night_vision=True)
+    compact_std = get_compact_logo_pixmap(night_vision=False)
+    compact_nv = get_compact_logo_pixmap(night_vision=True)
     assert not raw_std.isNull()
     assert not raw_nv.isNull()
+    assert not compact_std.isNull()
+    assert not compact_nv.isNull()
     assert raw_std.width() == raw_std.height()
     assert raw_nv.width() == raw_nv.height()
+    assert compact_std.width() == compact_std.height()
+    assert compact_nv.width() == compact_nv.height()
     assert get_logo_pixmap(night_vision=False) is raw_std
+    assert get_compact_logo_pixmap(night_vision=False) is compact_std
 
     target_h = 44
     pixmap = get_header_logo_pixmap(target_height=target_h)
@@ -123,6 +148,10 @@ def test_get_header_and_raw_logo_pixmap(qapp: QApplication) -> None:
     std_scaled = raw_std.scaled(240, 240, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
     nv_scaled = raw_nv.scaled(240, 240, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
     assert abs(_visual_content_width(std_scaled) - _visual_content_width(nv_scaled)) <= 2
+
+    compact_std_scaled = compact_std.scaled(84, 84, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    compact_nv_scaled = compact_nv.scaled(84, 84, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    assert abs(_visual_content_width(compact_std_scaled) - _visual_content_width(compact_nv_scaled)) <= 2
 
 
 def test_missing_asset_fallback_logs_warning(

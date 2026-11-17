@@ -1594,6 +1594,11 @@ class MainWindow(QMainWindow):
 
     def _apply_theme_to_widgets(self, is_night_vision: bool) -> None:
         """Menyelaraskan seluruh elemen visual, ikon, status bar, accordion, dan logo dengan tema aktif."""
+        # 0. Ikon Jendela
+        window_icon = get_app_icon(night_vision=is_night_vision)
+        if not window_icon.isNull():
+            self.setWindowIcon(window_icon)
+
         # 1. Logo Header
         if hasattr(self, "logo_label"):
             logo_pixmap = get_header_logo_pixmap(target_height=44, night_vision=is_night_vision)

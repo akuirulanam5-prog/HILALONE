@@ -79,11 +79,11 @@ export function Navbar() {
       <div className="container navbar__inner">
         <a className="brand-link" href="#beranda" aria-label="Beranda HILALONE">
           <picture>
-            <source srcSet="/branding/hilalone-logo-standard-96.webp" type="image/webp" />
+            <source srcSet="/branding/hilalone-icon-standard-96.webp" type="image/webp" />
             <img
               className="brand-link__logo"
-              src="/branding/hilalone-logo-standard-96.png"
-              alt="Logo resmi HILALONE"
+              src="/branding/hilalone-icon-standard-96.png"
+              alt="Ikon resmi HILALONE"
               width={40}
               height={40}
             />
