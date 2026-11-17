@@ -40,8 +40,8 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         self._is_night_vision = bool(night_vision)
         self.setWindowTitle(f"About {APP_NAME}")
-        self.setMinimumWidth(480)
-        self.resize(520, 440)
+        self.setMinimumWidth(520)
+        self.resize(560, 560)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 20, 20, 16)
@@ -85,6 +85,26 @@ class AboutDialog(QDialog):
         )
         self.description_label.setWordWrap(True)
         root.addWidget(self.description_label)
+
+        # Ringkasan Pembaruan Terbaru (What's New in Current Release)
+        self.whats_new_card = QFrame()
+        self.whats_new_card.setObjectName("aboutWhatsNewCard")
+        whats_new_layout = QVBoxLayout(self.whats_new_card)
+        whats_new_layout.setContentsMargins(16, 12, 16, 12)
+        whats_new_layout.setSpacing(6)
+
+        self.whats_new_title_label = QLabel(f"Apa yang Baru di v{__version__}")
+        self.whats_new_body_label = QLabel(
+            "• Scientific Processing Log & Console System terpusat (Run ID, Session ID, .log & .jsonl).\n"
+            "• Mode Detail bertingkat nyata: Normal, Verbose (metadata & rumus ilmiah), dan Debug (diagnostik).\n"
+            "• Standardisasi seluruh durasi ke format 'Duration: 0.00 s' & perbaikan tombol Auto-scroll.\n"
+            "• Export Visible & Export Complete Log otomatis mengarah ke folder sumber citra aktif.\n"
+            "• Sistem Pembaruan Otomatis (GitHub Releases + verifikasi SHA-256) & aset branding resmi baru."
+        )
+        self.whats_new_body_label.setWordWrap(True)
+        whats_new_layout.addWidget(self.whats_new_title_label)
+        whats_new_layout.addWidget(self.whats_new_body_label)
+        root.addWidget(self.whats_new_card)
 
         # Tautan resmi (Website & GitHub)
         self.links_card = QFrame()
@@ -165,6 +185,19 @@ class AboutDialog(QDialog):
             f"border: 1px solid {tokens.border_color};"
             f"border-radius: 8px;"
             f"}}"
+        )
+        self.whats_new_card.setStyleSheet(
+            f"QFrame#aboutWhatsNewCard {{"
+            f"background-color: {tokens.bg_surface};"
+            f"border: 1px solid {tokens.border_color};"
+            f"border-radius: 8px;"
+            f"}}"
+        )
+        self.whats_new_title_label.setStyleSheet(
+            f"font-size: 9.5pt; font-weight: 700; color: {tokens.text_primary};"
+        )
+        self.whats_new_body_label.setStyleSheet(
+            f"font-size: 8.8pt; color: {tokens.text_secondary}; line-height: 1.35;"
         )
         self.name_label.setStyleSheet(
             f"font-size: 16pt; font-weight: 700; letter-spacing: 2px; color: {tokens.text_primary};"

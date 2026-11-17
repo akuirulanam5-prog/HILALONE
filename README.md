@@ -1,6 +1,26 @@
 # HILALONE — Automated Hilal Image Processing
 
-**HILALONE** (v1.1.1) adalah aplikasi desktop Windows berbasis Python dan PySide6 untuk pengolahan citra pengamatan hilal dan bulan sabit muda secara otomatis, ilmiah, dan deterministik dengan prinsip *"Enhance the Signal, Never Invent the Signal"*.
+**HILALONE** (v1.1.2) adalah aplikasi desktop Windows berbasis Python dan PySide6 untuk pengolahan citra pengamatan hilal dan bulan sabit muda secara otomatis, ilmiah, dan deterministik dengan prinsip *"Enhance the Signal, Never Invent the Signal"*.
+
+---
+
+## Apa yang Baru di v1.1.2 (Release Highlights)
+
+1. **Professional Scientific Processing Log & Console System (`src/hilalone/core/logging/`)**:
+   - Arsitektur logging ilmiah terpusat dengan **Application Session ID (`SES-...`)** dan **Processing Run ID (`RUN-...`)** unik di setiap eksekusi pipeline/stacking.
+   - Pencatatan terstruktur dari 17 modul ilmiah (`SYSTEM`, `SESSION`, `INPUT`, `SEQUENCE`, `VALIDATION`, `CALIBRATION`, `FLAT`, `STACKING`, `BACKGROUND`, `ENHANCEMENT`, `HISTOGRAM`, `CURVE`, `DISPLAY`, `OUTPUT`, `VIEWER`, `LOGGING`, `EXPORT`, `UPDATE`, `HELP`, `ERROR`).
+   - Penyimpanan log permanen otomatis di `%LOCALAPPDATA%\HILALONE\Logs\` dalam format `.log` (manusia) dan `.jsonl` (terstruktur dengan sanitasi kredensial otomatis) beserta rotasi arsip ukuran 5 MB tanpa penghapusan diam-diam.
+2. **Tiga Mode Detail Fungsional (`Normal`, `Verbose`, `Debug`)**:
+   - **Normal**: Ringkasan bersih tahapan utama, kompatibilitas frame, progres terukur, lokasi output, dan blok `PROCESSING SUMMARY`.
+   - **Verbose**: Rincian parameter ilmiah lengkap (header FITS, statistik Master Flat & rumus normalisasi, parameter sigma-clipping/bobot kualitas stacking, sampel model background, CLAHE tile/clip limit, parameter stretch histogram, dan titik kontrol kurva).
+   - **Debug**: Diagnostik teknis internal (`[DEBUG]`) mencakup dimensi array internal, alokasi strip memori, thread eksekusi, serta verifikasi ukuran byte berkas hasil di disk.
+3. **Standardisasi Format Durasi (`Duration: 0.00 s`) & Penyempurnaan UI Console**:
+   - Seluruh durasi proses yang ditampilkan ke pengguna distandardisasi ke format `Duration: 0.00 s`, sedangkan `.jsonl` mempertahankan nilai numerik presisi penuh `duration_ms`.
+   - Perbaikan tata letak responsif tombol `Auto-scroll: ON` / `OFF` berbasis metrik font tebal (`QFontMetrics`) agar tidak pernah terpotong pada ukuran jendela kecil maupun tema **Standard Dark** / **Night Vision Red**.
+   - **Export Visible** (`HILALONE_Log_Visible_YYYYMMDD_HHMMSS.log`) dan **Export Complete Log** (`HILALONE_Log_Complete_YYYYMMDD_HHMMSS.log`) kini otomatis mengarah ke **folder sumber citra aktif** (atau fallback ke folder log HILALONE jika belum ada citra yang dibuka) dengan proteksi konfirmasi overwrite.
+4. **Desktop Auto-Update System & Pembaruan Branding (v1.1.0 – v1.1.2)**:
+   - Menu **Help** (**Check for Updates...**, **Automatic Update Check**, **Report an Issue...**, **About HILALONE...**) terintegrasi langsung dengan GitHub Releases API dan verifikasi checksum **SHA-256**.
+   - Pembaruan paket ikon & logo resmi resolusi tinggi untuk **Standard Dark** dan **Night Vision Red**.
 
 ---
 
@@ -38,6 +58,7 @@ HILALONE/
 ├─ docs/                  # Dokumen spesifikasi, roadmap, gambaran proyek, & laporan audit
 ├─ hooks/                 # Hook PyInstaller kustom (astropy)
 ├─ src/hilalone/
+│  ├─ core/logging/       # Sistem Scientific Processing Log terpusat (.log, .jsonl, filter, session)
 │  ├─ gui/                # Antarmuka PySide6, viewer, panel, dialog, worker thread
 │  ├─ input_manager/      # Adapter pembacaaan FITS, TIFF, RAW, SER, Video, sequence manager
 │  ├─ output_manager/     # Penulis hasil linear & visual terpisah + riwayat pemrosesan
@@ -120,5 +141,7 @@ Dokumentasi lengkap proses build, uji distribusi bersih, dan pembuatan installer
 - [docs/software_requirements.md](docs/software_requirements.md) — Spesifikasi kebutuhan fungsional & non-fungsional
 - [docs/development_roadmap.md](docs/development_roadmap.md) — Tahapan pengembangan MVP 1.0
 - [docs/HILALONE_MVP1_QUALITY_AUDIT.md](docs/HILALONE_MVP1_QUALITY_AUDIT.md) — Audit kualitas dan validasi ilmiah
+- [docs/HILALONE_LOGGING_AUDIT.md](docs/HILALONE_LOGGING_AUDIT.md) — Audit sistem logging & rancangan arsitektur Console Log
+- [docs/HILALONE_LOGGING_STANDARD.md](docs/HILALONE_LOGGING_STANDARD.md) — Standar format Scientific Processing Log & Console System
 - [docs/update_and_release_guide.md](docs/update_and_release_guide.md) — Arsitektur sistem pembaruan desktop & checklist rilis developer
 - [BUILD_README.md](BUILD_README.md) — Panduan build executable Windows dan installer
