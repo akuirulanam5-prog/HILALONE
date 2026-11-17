@@ -1,5 +1,5 @@
 ; ============================================================================
-; HILALONE v1.0.0 — Skrip Windows Installer (Inno Setup 7)
+; HILALONE v1.1.0 — Skrip Windows Installer (Inno Setup 7)
 ; Target output: release\HILALONE_Setup.exe
 ;
 ; Catatan:
@@ -10,7 +10,7 @@
 ; ============================================================================
 
 #define MyAppName "HILALONE"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "HILALONE Project"
 #define MyAppDescription "Automated Hilal Image Processing"
 #define MyAppExeName "HILALONE.exe"
@@ -22,7 +22,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-VersionInfoVersion=1.0.0.0
+VersionInfoVersion=1.1.0.0
 VersionInfoDescription={#MyAppDescription}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}

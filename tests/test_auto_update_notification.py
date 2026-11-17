@@ -137,15 +137,15 @@ def test_notification_version_logic_later_snooze_and_different_version() -> None
     assert should_show_update_notification(prefs, "v0.9.0", now=t0) is False
 
     # Versi stabil baru -> memicu notifikasi
-    assert should_show_update_notification(prefs, "v1.1.0", now=t0) is True
+    assert should_show_update_notification(prefs, "v1.2.0", now=t0) is True
 
-    # Pengguna klik Later untuk 1.1.0 -> ditunda 24 jam, TIDAK memblokir versi berbeda (1.2.0)
-    snoozed = snooze_update_reminder(prefs, "v1.1.0", now=t0)
-    assert snoozed.last_notified_version == "1.1.0"
-    assert should_show_update_notification(snoozed, "v1.1.0", now=t0 + timedelta(hours=12)) is False
-    assert should_show_update_notification(snoozed, "v1.2.0", now=t0 + timedelta(hours=12)) is True
-    # Setelah >= 24 jam -> pengingat 1.1.0 kembali diizinkan
-    assert should_show_update_notification(snoozed, "v1.1.0", now=t0 + timedelta(hours=24)) is True
+    # Pengguna klik Later untuk 1.2.0 -> ditunda 24 jam, TIDAK memblokir versi berbeda (1.3.0)
+    snoozed = snooze_update_reminder(prefs, "v1.2.0", now=t0)
+    assert snoozed.last_notified_version == "1.2.0"
+    assert should_show_update_notification(snoozed, "v1.2.0", now=t0 + timedelta(hours=12)) is False
+    assert should_show_update_notification(snoozed, "v1.3.0", now=t0 + timedelta(hours=12)) is True
+    # Setelah >= 24 jam -> pengingat 1.2.0 kembali diizinkan
+    assert should_show_update_notification(snoozed, "v1.2.0", now=t0 + timedelta(hours=24)) is True
 
 
 # ==============================================================================
@@ -194,7 +194,7 @@ def test_auto_check_available_triggers_notification_update_now_and_later(
     monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Ok))
     monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Ok))
 
-    res_110 = _make_release_result("v1.1.0")
+    res_120 = _make_release_result("v1.2.0")
     win = MainWindow()
     win._update_config_path = cfg_path
     win._is_frozen_checker = lambda: True
@@ -205,7 +205,7 @@ def test_auto_check_available_triggers_notification_update_now_and_later(
     try:
         # 1. Jalankan auto check saat timer dipicu -> membuka UpdateNotificationDialog
         win._startup_update_timer.stop()
-        started = win.run_automatic_update_check(check_func=lambda local_version: res_110, now=t0)
+        started = win.run_automatic_update_check(check_func=lambda local_version: res_120, now=t0)
         assert started is True
 
         deadline = time.perf_counter() + 3.0
@@ -217,7 +217,7 @@ def test_auto_check_available_triggers_notification_update_now_and_later(
         assert isinstance(notif, UpdateNotificationDialog)
         assert notif.isVisible()
         assert f"v{__version__}" in notif.lbl_current_ver.text()
-        assert notif.lbl_latest_ver.text() == "v1.1.0"
+        assert notif.lbl_latest_ver.text() == "v1.2.0"
         assert "2026-11-22" in notif.lbl_release_date.text()
         assert "Fitur baru" in notif.notes_summary_edit.toPlainText()
 
@@ -228,21 +228,21 @@ def test_auto_check_available_triggers_notification_update_now_and_later(
         assert win._reminder_update_timer.isActive() is True
 
         saved_prefs = load_update_preferences(cfg_path)
-        assert saved_prefs.last_notified_version == "1.1.0"
+        assert saved_prefs.last_notified_version == "1.2.0"
         assert saved_prefs.next_update_reminder != ""
         assert saved_prefs.last_update_check == format_iso_utc(t0)
 
         # Dalam < 24 jam, auto check tidak berulang
         assert (
             win.run_automatic_update_check(
-                check_func=lambda local_version: res_110,
+                check_func=lambda local_version: res_120,
                 now=t0 + timedelta(hours=5),
             )
             is False
         )
 
         # Manual Help -> Check for Updates TETAP berjalan kapan saja walau dalam periode 24h & ditunda
-        win.check_for_updates_interactive(check_func=lambda local_version: res_110)
+        win.check_for_updates_interactive(check_func=lambda local_version: res_120)
         deadline = time.perf_counter() + 3.0
         while win.update_dialog is None and time.perf_counter() < deadline:
             qapp.processEvents()
@@ -252,27 +252,27 @@ def test_auto_check_available_triggers_notification_update_now_and_later(
         win.update_dialog.close()
         win.update_dialog = None
 
-        # 3. Setelah >= 24 jam atau saat versi berbeda (v1.2.0) tersedia -> Update Now membuka UpdateDialog
-        res_120 = _make_release_result("v1.2.0", body="Pembaruan besar v1.2.0")
+        # 3. Setelah >= 24 jam atau saat versi berbeda (v1.3.0) tersedia -> Update Now membuka UpdateDialog
+        res_130 = _make_release_result("v1.3.0", body="Pembaruan besar v1.3.0")
         t_next = t0 + timedelta(hours=25)
         win._now_provider = lambda: t_next
-        assert win.run_automatic_update_check(check_func=lambda local_version: res_120, now=t_next) is True
+        assert win.run_automatic_update_check(check_func=lambda local_version: res_130, now=t_next) is True
 
         deadline = time.perf_counter() + 3.0
         while (
             win.update_notification_dialog is None
-            or win.update_notification_dialog.check_result.release.tag_name != "v1.2.0"
+            or win.update_notification_dialog.check_result.release.tag_name != "v1.3.0"
         ) and time.perf_counter() < deadline:
             qapp.processEvents()
             time.sleep(0.01)
 
         notif2 = win.update_notification_dialog
-        assert notif2 is not None and notif2.lbl_latest_ver.text() == "v1.2.0"
+        assert notif2 is not None and notif2.lbl_latest_ver.text() == "v1.3.0"
         notif2.btn_update_now.click()
         qapp.processEvents()
         assert isinstance(win.update_dialog, UpdateDialog)
         assert win.update_dialog.isVisible()
-        assert win.update_dialog.lbl_latest_ver.text() == "v1.2.0"
+        assert win.update_dialog.lbl_latest_ver.text() == "v1.3.0"
     finally:
         win.close()
 

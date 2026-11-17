@@ -182,8 +182,8 @@ def test_check_for_updates_up_to_date() -> None:
 
 
 def test_check_for_updates_available_and_legacy_installer_compat() -> None:
-    # Menguji pengenalan nama installer v1.0 style (HILALONE_Setup_v1.0.exe) maupun v1.1.0
-    payload = _make_release_payload(tag_name="v1.1.0", asset_name="HILALONE_Setup_v1.1.0.exe")
+    # Menguji pengenalan nama installer v1.0 style (`HILALONE_Setup_v1.0.exe`), v1.1.0, dan versi di atas __version__
+    payload = _make_release_payload(tag_name="v1.2.0", asset_name="HILALONE_Setup_v1.2.0.exe")
     raw = json.dumps(payload).encode("utf-8")
     opener = lambda req, timeout=15: _FakeResponse(raw)
 
@@ -191,9 +191,18 @@ def test_check_for_updates_available_and_legacy_installer_compat() -> None:
     assert result.status == UpdateStatus.UPDATE_AVAILABLE
     assert result.is_update_available is True
     assert result.installer_asset is not None
-    assert result.installer_asset.name == "HILALONE_Setup_v1.1.0.exe"
+    assert result.installer_asset.name == "HILALONE_Setup_v1.2.0.exe"
 
-    # Pastikan format nama rilis v1.0.0 saat ini (`HILALONE_Setup_v1.0.exe`) juga terpilih valid
+    # Pastikan jalur upgrade dari v1.0.0 ke v1.1.0 serta aset v1.0.0 tetap kompatibel
+    payload_110 = _make_release_payload(tag_name="v1.1.0", asset_name="HILALONE_Setup_v1.1.0.exe")
+    res_100_to_110 = check_for_updates(
+        local_version="1.0.0",
+        opener=lambda req, timeout=15: _FakeResponse(json.dumps(payload_110).encode("utf-8")),
+    )
+    assert res_100_to_110.status == UpdateStatus.UPDATE_AVAILABLE
+    assert res_100_to_110.installer_asset is not None
+    assert res_100_to_110.installer_asset.name == "HILALONE_Setup_v1.1.0.exe"
+
     legacy_payload = _make_release_payload(tag_name="v1.0.0", asset_name="HILALONE_Setup_v1.0.exe")
     legacy_release = parse_release_payload(legacy_payload)
     chosen = select_windows_installer_asset(legacy_release)

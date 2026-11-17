@@ -1,6 +1,6 @@
 """HILALONE - Automated Hilal Image Processing."""
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 APP_NAME = "HILALONE"
 APP_SUBTITLE = "Automated Hilal Image Processing"
