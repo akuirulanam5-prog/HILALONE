@@ -46,4 +46,7 @@ atau panggil compiler secara langsung:
 ```bat
 "%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe" HILALONE.iss
 ```
-Hasil installer akan dibuat di `release\HILALONE_Setup.exe`. Instalasi default bersifat *per-user* (`%LOCALAPPDATA%\Programs\HILALONE`) sehingga tidak membutuhkan hak Administrator dan tidak menghapus konfigurasi/log pengguna saat uninstall.
+Hasil installer akan dibuat di `release\HILALONE_Setup.exe`. Instalasi default bersifat *per-user* (`%LOCALAPPDATA%\Programs\HILALONE`) sehingga tidak membutuhkan hak Administrator dan tidak menghapus konfigurasi/log/folder `updates\` pengguna saat uninstall.
+
+## 6. Konsistensi Versi, Nama Installer Rilis & Prosedur Pembaruan
+Untuk rilis berikutnya (mis. `v1.1.0`), sinkronkan versi di `src\hilalone\__init__.py`, `pyproject.toml`, `HILALONE.iss` (pertahankan `AppId` dan `PrivilegesRequired=lowest` agar upgrade berjalan mulus), `file_version_info.txt`, serta `website\src\data\siteConfig.ts`. Gunakan standar penamaan berkas aset unggahan GitHub Releases `HILALONE_Setup_v<X.Y.Z>.exe` (tetap kompatibel dengan `HILALONE_Setup_v1.0.exe`). Lihat checklist lengkap 8 langkah pada [docs/update_and_release_guide.md](docs/update_and_release_guide.md).
