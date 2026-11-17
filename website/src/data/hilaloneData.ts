@@ -1,3 +1,5 @@
+import { siteConfig } from "./siteConfig";
+
 export type VerificationStatus = "TERUJI" | "PARSIAL" | "DIRENCANAKAN";
 
 export type FeatureCategory =
@@ -674,7 +676,7 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
     id: "how-to-download",
     question: "Bagaimana mengunduh aplikasi?",
     answer:
-      "Anda dapat mengunduh paket installer resmi Windows (HILALONE_Setup_v1.0.exe) secara langsung melalui tombol Unduh di bagian Distribusi Aplikasi pada halaman ini atau melalui halaman GitHub Releases resmi beserta verifikasi checksum SHA-256.",
+      `Anda dapat mengunduh paket installer resmi Windows (${siteConfig.installerFilename}) secara langsung melalui tombol Unduh di bagian Distribusi Aplikasi pada halaman ini atau melalui halaman GitHub Releases resmi beserta verifikasi checksum SHA-256.`,
   },
   {
     id: "report-bugs",
