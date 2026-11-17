@@ -157,9 +157,23 @@ export function DownloadSection() {
               <ShieldAlert size={16} className="download-footnote__icon" aria-hidden="true" />
               <span>
                 Catatan rilis: instalasi default diarahkan ke profil pengguna (per-user) tanpa
-                menghapus konfigurasi atau log pengguna saat pencopotan aplikasi.
+                menghapus konfigurasi atau log pengguna saat pencopotan aplikasi. Aplikasi juga
+                dilengkapi fitur <strong>Check for Updates</strong> otomatis via GitHub Releases.
               </span>
             </div>
+
+            {siteConfig.releaseHighlights && siteConfig.releaseHighlights.length > 0 ? (
+              <div className="download-footnote" style={{ marginTop: "0.75rem", display: "block" }}>
+                <strong style={{ display: "block", marginBottom: "0.35rem" }}>
+                  Apa yang Baru di HILALONE v{siteConfig.version}:
+                </strong>
+                <ul style={{ margin: 0, paddingLeft: "1.15rem", display: "grid", gap: "0.25rem" }}>
+                  {siteConfig.releaseHighlights.map((item, idx) => (
+                    <li key={idx}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

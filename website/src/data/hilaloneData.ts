@@ -95,7 +95,7 @@ export interface FaqItem {
 export const HERO_HIGHLIGHTS = [
   { label: "Presisi Internal", value: "float32 Linear" },
   { label: "Profil Otomatis", value: "Basic · Medium · High" },
-  { label: "Unit Test Pytest", value: "251 Passed" },
+  { label: "Unit Test Pytest", value: "271 Passed" },
   { label: "Geometri Stacking", value: "Tanpa Warping / Align" },
 ] as const;
 
@@ -305,11 +305,11 @@ export const FEATURES: readonly FeatureItem[] = [
   },
   {
     id: "console-log",
-    name: "Console & Processing Log",
+    name: "Scientific Console & Processing Log",
     category: "Analisis, Log & Ekspor",
     iconName: "Terminal",
-    description: "Panel log terstruktur real-time untuk tiap tahap input, validasi, kalibrasi, dan pipeline dengan ekspor TXT, CSV, serta JSON.",
-    benefit: "Menjaga transparansi setiap proses dan mempermudah pelacakan galat atau laporan audit.",
+    description: "Sistem log ilmiah terpusat (Run ID & Session ID) dengan mode Detail Normal/Verbose/Debug, format durasi standar (Duration: 0.00 s), serta penyimpanan permanen (.log & .jsonl) dan ekspor otomatis ke folder sumber citra.",
+    benefit: "Menjaga transparansi setiap tahap pemrosesan ilmiah dan mempermudah audit parameter maupun pelacakan galat.",
     status: "TERUJI",
   },
   {
@@ -562,7 +562,7 @@ export const ROADMAP_STAGES: readonly RoadmapStage[] = [
     items: [
       { label: "Reader FITS, TIFF, Video (MP4/MOV/AVI), SER, PNG/JPEG & Pipeline", badge: "Teruji" },
       { label: "RAW Kamera Reader (LibRaw / rawpy)", badge: "Parsial (belum uji RAW kamera asli)" },
-      { label: `PyInstaller ONE-DIR & Desktop Auto-Updater (v${siteConfig.version})`, badge: "251 Passed" },
+      { label: `PyInstaller ONE-DIR & Desktop Auto-Updater (v${siteConfig.version})`, badge: "271 Passed" },
       { label: `Installer Windows (${siteConfig.installerFilename})`, badge: `Tersedia (v${siteConfig.version})` },
     ],
   },
