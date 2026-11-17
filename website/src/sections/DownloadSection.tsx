@@ -1,9 +1,24 @@
-import { Clock, Download, ExternalLink, ShieldAlert } from "lucide-react";
+import { useState } from "react";
+import { Check, Clock, Copy, Download, ExternalLink, ShieldAlert } from "lucide-react";
 import { SectionHeader } from "../components/SectionHeader";
 import { siteConfig } from "../data/siteConfig";
 
 export function DownloadSection() {
   const ready = siteConfig.downloadAvailable && siteConfig.downloadUrl !== null;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopySha = async () => {
+    if (!siteConfig.sha256 || typeof navigator === "undefined" || !navigator.clipboard) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(siteConfig.sha256);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2400);
+    } catch {
+      setCopied(false);
+    }
+  };
 
   return (
     <section id="unduh" className="section">
@@ -19,47 +34,39 @@ export function DownloadSection() {
               />
 
               {ready && siteConfig.downloadUrl ? (
-                <div>
-                  <div className="download-actions">
-                    <a
-                      href={siteConfig.downloadUrl}
-                      className="btn btn--primary"
-                      download={siteConfig.installerFilename}
-                      rel="noopener noreferrer"
-                    >
-                      <Download size={18} aria-hidden="true" />
-                      <span>Unduh {siteConfig.installerFilename}</span>
-                    </a>
+                <div className="download-actions">
+                  <a
+                    href={siteConfig.downloadUrl}
+                    className="btn btn--primary"
+                    download={siteConfig.installerFilename}
+                    rel="noopener noreferrer"
+                  >
+                    <Download size={18} aria-hidden="true" />
+                    <span>Unduh {siteConfig.installerFilename}</span>
+                  </a>
 
-                    {siteConfig.repoIsPublic ? (
-                      <a
-                        href={siteConfig.releasePageUrl ?? siteConfig.githubUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn btn--secondary"
-                      >
-                        <span>Lihat GitHub Releases</span>
-                        <ExternalLink size={16} aria-hidden="true" />
-                      </a>
-                    ) : null}
-                  </div>
+                  {siteConfig.repoIsPublic ? (
+                    <a
+                      href={siteConfig.releasePageUrl ?? siteConfig.githubUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn--secondary"
+                    >
+                      <span>Lihat GitHub Releases</span>
+                      <ExternalLink size={16} aria-hidden="true" />
+                    </a>
+                  ) : null}
                 </div>
               ) : (
                 <div>
-                  <div
-                    className="callout-box"
-                    style={{ marginTop: 0, marginBottom: "1.15rem" }}
-                    role="status"
-                  >
-                    <div style={{ display: "flex", alignItems: "flex-start", gap: "0.6rem" }}>
-                      <Clock size={18} style={{ flexShrink: 0, marginTop: 2 }} aria-hidden="true" />
-                      <div>
-                        <strong>Installer HILALONE v{siteConfig.version} sedang dipersiapkan.</strong>{" "}
-                        Build executable <code>ONE-DIR</code> telah selesai diuji di lingkungan
-                        pengembangan terisolasi; paket installer resmi (
-                        <code>{siteConfig.installerFilename}</code>) akan ditautkan di sini setelah
-                        diterbitkan di GitHub Releases.
-                      </div>
+                  <div className="notice-strip" style={{ marginTop: 0, marginBottom: "1.15rem" }} role="status">
+                    <Clock size={18} style={{ flexShrink: 0, marginTop: 2 }} aria-hidden="true" />
+                    <div>
+                      <strong>Installer HILALONE v{siteConfig.version} sedang dipersiapkan.</strong>{" "}
+                      Build executable <code>ONE-DIR</code> telah selesai diuji di lingkungan
+                      pengembangan terisolasi; paket installer resmi (
+                      <code>{siteConfig.installerFilename}</code>) akan ditautkan di sini setelah
+                      diterbitkan di GitHub Releases.
                     </div>
                   </div>
 
@@ -92,56 +99,68 @@ export function DownloadSection() {
             </div>
 
             <div>
-              <div className="download-meta-grid">
+              <dl className="download-meta-grid">
                 <div>
-                  <div className="meta-kv__k">Versi Rilis</div>
-                  <div className="meta-kv__v">
+                  <dt className="meta-kv__k">Versi Rilis</dt>
+                  <dd className="meta-kv__v">
                     v{siteConfig.version} ({siteConfig.mvpStage})
-                  </div>
+                  </dd>
                 </div>
                 <div>
-                  <div className="meta-kv__k">Nama Installer</div>
-                  <div className="meta-kv__v" style={{ fontFamily: "var(--font-mono)" }}>
+                  <dt className="meta-kv__k">Nama Installer</dt>
+                  <dd className="meta-kv__v meta-kv__mono">
                     {siteConfig.installerFilename}
-                  </div>
+                  </dd>
                 </div>
                 <div>
-                  <div className="meta-kv__k">Ukuran Berkas</div>
-                  <div className="meta-kv__v">
+                  <dt className="meta-kv__k">Ukuran Berkas</dt>
+                  <dd className="meta-kv__v">
                     {siteConfig.fileSize ?? "Menunggu kompilasi installer"}
-                  </div>
+                  </dd>
                 </div>
                 <div>
-                  <div className="meta-kv__k">Tanggal Rilis</div>
-                  <div className="meta-kv__v">
+                  <dt className="meta-kv__k">Tanggal Rilis</dt>
+                  <dd className="meta-kv__v">
                     {siteConfig.releaseDate ?? "Menunggu penerbitan resmi"}
+                  </dd>
+                </div>
+                <div className="download-meta-grid__full">
+                  <dt className="meta-kv__k">Dukungan Windows</dt>
+                  <dd className="meta-kv__v">{siteConfig.supportedWindows}</dd>
+                </div>
+                <div className="download-meta-grid__full">
+                  <div className="meta-kv__head-row">
+                    <dt className="meta-kv__k">SHA-256 Checksum</dt>
+                    {siteConfig.sha256 ? (
+                      <button
+                        type="button"
+                        className="copy-sha-btn"
+                        onClick={handleCopySha}
+                      >
+                        {copied ? (
+                          <>
+                            <Check size={13} aria-hidden="true" />
+                            <span>Tersalin</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy size={13} aria-hidden="true" />
+                            <span>Salin SHA-256</span>
+                          </>
+                        )}
+                      </button>
+                    ) : null}
                   </div>
-                </div>
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <div className="meta-kv__k">Dukungan Windows</div>
-                  <div className="meta-kv__v">{siteConfig.supportedWindows}</div>
-                </div>
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <div className="meta-kv__k">SHA-256 Checksum</div>
-                  <div
-                    className="meta-kv__v"
-                    style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem" }}
-                  >
+                  <dd className="meta-kv__v meta-kv__sha">
                     {siteConfig.sha256 ?? "Akan diterbitkan bersama berkas installer resmi"}
-                  </div>
+                  </dd>
+                  <span className="visually-hidden" aria-live="polite">
+                    {copied ? "Hash SHA-256 berhasil disalin ke papan klip." : ""}
+                  </span>
                 </div>
-              </div>
+              </dl>
 
-              <div
-                style={{
-                  marginTop: "0.85rem",
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: "0.5rem",
-                  fontSize: "0.82rem",
-                  color: "var(--text-secondary)",
-                }}
-              >
+              <div className="download-footnote">
                 <ShieldAlert size={16} style={{ flexShrink: 0, marginTop: 2 }} aria-hidden="true" />
                 <span>
                   Catatan rilis: instalasi default diarahkan ke profil pengguna (per-user) tanpa

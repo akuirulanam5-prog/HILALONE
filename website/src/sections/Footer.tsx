@@ -30,7 +30,7 @@ export function Footer() {
           </div>
 
           <div>
-            <h3 className="footer__heading">Navigasi Utama</h3>
+            <h2 className="footer__heading">Navigasi</h2>
             <ul className="footer__links">
               <li>
                 <a href="#tentang">Tentang HILALONE</a>
@@ -54,7 +54,7 @@ export function Footer() {
           </div>
 
           <div>
-            <h3 className="footer__heading">Sumber &amp; Dokumentasi</h3>
+            <h2 className="footer__heading">Sumber &amp; Dokumentasi</h2>
             <ul className="footer__links">
               {siteConfig.repoIsPublic ? (
                 <li>

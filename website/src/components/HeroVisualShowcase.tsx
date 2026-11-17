@@ -18,7 +18,7 @@ export function HeroVisualShowcase() {
     <div className={`hero-visual${nightMode ? " hero-visual--night" : ""}`}>
       <div className="hero-visual__topbar">
         <span className="hero-visual__mode-label">
-          {nightMode ? "TEMA: NIGHT VISION RED" : "TEMA: STANDARD DARK"}
+          {nightMode ? "NIGHT VISION RED" : "STANDARD DARK"}
         </span>
         <div className="theme-pill-group" role="group" aria-label="Pratinjau tema antarmuka">
           <button
@@ -27,8 +27,8 @@ export function HeroVisualShowcase() {
             aria-pressed={!nightMode}
             onClick={() => setNightMode(false)}
           >
-            <SunMedium size={12} style={{ display: "inline", marginRight: 4, verticalAlign: "-1px" }} aria-hidden="true" />
-            Dark
+            <SunMedium size={12} aria-hidden="true" />
+            <span>Dark</span>
           </button>
           <button
             type="button"
@@ -36,8 +36,8 @@ export function HeroVisualShowcase() {
             aria-pressed={nightMode}
             onClick={() => setNightMode(true)}
           >
-            <Moon size={12} style={{ display: "inline", marginRight: 4, verticalAlign: "-1px" }} aria-hidden="true" />
-            Night Red
+            <Moon size={12} aria-hidden="true" />
+            <span>Night Red</span>
           </button>
         </div>
       </div>
@@ -57,26 +57,12 @@ export function HeroVisualShowcase() {
             }
             width={204}
             height={204}
+            fetchPriority="high"
           />
         </picture>
       </div>
 
-      <div className="hero-visual__layers">
-        <div className="mini-layer-chip">
-          <div className="mini-layer-chip__k">DATA MASTER</div>
-          <div className="mini-layer-chip__v">float32 Linear</div>
-        </div>
-        <div className="mini-layer-chip">
-          <div className="mini-layer-chip__k">CALIBRATION</div>
-          <div className="mini-layer-chip__v">Master Flat Opt.</div>
-        </div>
-        <div className="mini-layer-chip">
-          <div className="mini-layer-chip__k">DISPLAY</div>
-          <div className="mini-layer-chip__v">MTF · Asinh · GHS</div>
-        </div>
-      </div>
-
-      <div className="hero-visual__preview-strip">
+      <figure className="hero-visual__preview-strip">
         <img
           src={previewShot}
           alt={
@@ -88,11 +74,11 @@ export function HeroVisualShowcase() {
           height={450}
           loading="eager"
         />
-        <div className="hero-visual__preview-caption">
-          <span>Antarmuka Aktual Desktop Qt / PySide6</span>
+        <figcaption className="hero-visual__preview-caption">
+          <span>Antarmuka Desktop PySide6</span>
           <span>Data uji sintetis (bukan observasi nyata)</span>
-        </div>
-      </div>
+        </figcaption>
+      </figure>
     </div>
   );
 }

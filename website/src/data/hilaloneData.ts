@@ -95,8 +95,26 @@ export interface FaqItem {
 export const HERO_HIGHLIGHTS = [
   { label: "Presisi Internal", value: "float32 Linear" },
   { label: "Profil Otomatis", value: "Basic · Medium · High" },
-  { label: "Unit Test Pytest", value: "227 Passed" },
+  { label: "Unit Test Pytest", value: "251 Passed" },
   { label: "Geometri Stacking", value: "Tanpa Warping / Align" },
+] as const;
+
+export const HERO_PILLARS = [
+  {
+    id: "readonly",
+    title: "Read-Only & float32 Linear",
+    summary: "Berkas sumber asli tidak pernah diubah dan diproses linear tanpa kuantisasi 8-bit dini.",
+  },
+  {
+    id: "no-align",
+    title: "Stacking Tanpa Alignment Paksa",
+    summary: "Stabilitas piksel diukur baca-saja (FFT Phase Correlation), menjaga geometri asli frame.",
+  },
+  {
+    id: "night-updater",
+    title: "Night Vision Red & SHA-256 Updater",
+    summary: "Tema merah observasi malam serta pemeriksaan pembaruan GitHub tervalidasi hash SHA-256.",
+  },
 ] as const;
 
 export const ABOUT_PILLARS = [
@@ -537,15 +555,15 @@ export const ROADMAP_STAGES: readonly RoadmapStage[] = [
     id: "mvp-1",
     stage: "MVP 1.0",
     title: "Automated Astronomical Image Processing",
-    statusLabel: "Diimplementasikan · Build v1.0.0 Tahap Uji Distribusi",
+    statusLabel: `Aktif · Rilis v${siteConfig.version}`,
     statusKind: "active",
     summary:
-      "Fokus pada pembacaan multi-format ilmiah, validasi kompatibilitas, kalibrasi flat opsional, stacking tanpa alignment, ekstraksi latar, enhancement/stretch terpisah, dan antarmuka desktop Windows.",
+      "Fokus pada pembacaan multi-format ilmiah, validasi kompatibilitas, kalibrasi flat opsional, stacking tanpa alignment, ekstraksi latar, enhancement/stretch terpisah, dan desktop updater.",
     items: [
       { label: "Reader FITS, TIFF, Video (MP4/MOV/AVI), SER, PNG/JPEG & Pipeline", badge: "Teruji" },
       { label: "RAW Kamera Reader (LibRaw / rawpy)", badge: "Parsial (belum uji RAW kamera asli)" },
-      { label: "PyInstaller ONE-DIR Build (v1.0.0)", badge: "Teruji di mesin dev terisolasi" },
-      { label: "Installer Windows (HILALONE_Setup_v1.0.exe)", badge: "Tersedia (v1.0.0)" },
+      { label: `PyInstaller ONE-DIR & Desktop Auto-Updater (v${siteConfig.version})`, badge: "251 Passed" },
+      { label: `Installer Windows (${siteConfig.installerFilename})`, badge: `Tersedia (v${siteConfig.version})` },
     ],
   },
   {
@@ -573,7 +591,10 @@ export const ROADMAP_STAGES: readonly RoadmapStage[] = [
     items: [
       { label: "Bantuan deteksi kandidat sabit hilal berbasis riset", badge: "Planned" },
       { label: "Fitur riset lanjutan & integrasi alur pengamatan terstandar", badge: "Planned" },
-      { label: "Catatan: Belum tersedia di v1.0.0 — tidak mengklaim penentuan visibilitas otomatis", badge: "Penting" },
+      {
+        label: `Catatan: Belum tersedia di v${siteConfig.version} — tidak mengklaim penentuan visibilitas otomatis`,
+        badge: "Penting",
+      },
     ],
   },
 ];
