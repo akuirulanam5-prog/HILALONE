@@ -9,7 +9,7 @@ export function WorkflowSection() {
   return (
     <section id="alur-kerja" className="section section--alt">
       <div className="container">
-        <div className="workflow-editorial">
+        <div className="section-panel workflow-editorial">
           <div className="workflow-editorial__intro">
             <div className="eyebrow">
               <GitCommitHorizontal size={14} aria-hidden="true" />

@@ -23,7 +23,7 @@ export function Navbar() {
   const innerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
 
-  const [isWide, setIsWide] = useState(true);
+  const [isWide, setIsWide] = useState(false);
   const [isMeasuring, setIsMeasuring] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeId, setActiveId] = useState<string>("fitur");
@@ -72,6 +72,16 @@ export function Navbar() {
       const supportsPopover = Object.hasOwn(HTMLElement.prototype, "popover");
       const wasPopoverOpen =
         supportsPopover && menuEl.matches(":popover-open");
+
+      if (headerEl.clientWidth < 960) {
+        headerEl.classList.remove("is-wide", "is-measuring");
+        if (supportsPopover && !menuEl.hasAttribute("popover")) {
+          menuEl.setAttribute("popover", "auto");
+        }
+        setIsWide(false);
+        setIsMeasuring(false);
+        return;
+      }
 
       setIsMeasuring(true);
       headerEl.classList.add("is-wide", "is-measuring");

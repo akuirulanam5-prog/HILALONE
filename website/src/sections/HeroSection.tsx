@@ -12,8 +12,8 @@ const PILLAR_ICONS = {
 export function HeroSection() {
   return (
     <section id="beranda" className="hero">
-      <div className="hero-band">
-        <div className="container">
+      <div className="container">
+        <div className="hero-frame">
           <div className="hero__grid">
             <div className="hero__copy">
               <div className="hero__meta">
@@ -29,9 +29,8 @@ export function HeroSection() {
               </h1>
 
               <p className="hero__desc">
-                Perangkat lunak desktop Windows berbasis Python dan PySide6 untuk membaca,
-                memvalidasi, menumpuk, serta menampilkan citra pengamatan hilal secara terstruktur
-                dan menjaga keaslian sinyal ilmiah.
+                Perangkat lunak desktop Windows untuk tim rukyat, peneliti, dan mahasiswa falak guna
+                membaca, memvalidasi, menumpuk, dan mengekspor citra pengamatan secara terstruktur.
               </p>
 
               <blockquote className="hero__philosophy">
@@ -43,9 +42,9 @@ export function HeroSection() {
                   <Download size={18} aria-hidden="true" />
                   <span>Unduh HILALONE v{siteConfig.version}</span>
                 </a>
-                <a href="#antarmuka" className="btn btn--navy-outline">
+                <a href="#fitur" className="btn btn--navy-outline">
                   <Compass size={18} aria-hidden="true" />
-                  <span>Lihat Antarmuka &amp; Fitur</span>
+                  <span>Lihat Fitur &amp; Antarmuka</span>
                 </a>
               </div>
 
@@ -64,26 +63,24 @@ export function HeroSection() {
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Strip 3 pilar inti pada ruang baca terang tepat di bawah Hero */}
-      <div className="pillars-band">
-        <div className="container">
-          <ul className="hero-pillars" aria-label="Pilar utama desain ilmiah">
-            {HERO_PILLARS.map((pillar) => {
-              const IconComp = PILLAR_ICONS[pillar.id];
-              return (
-                <li key={pillar.id} className="hero-pillar">
-                  <div className="hero-pillar__head">
-                    <IconComp size={18} className="hero-pillar__icon" aria-hidden="true" />
-                    <h2 className="hero-pillar__title">{pillar.title}</h2>
-                  </div>
+        {/* Strip 3 pilar inti di bawah hero (Blok 1 referensi layout) */}
+        <ul className="hero-pillars" aria-label="Pilar utama desain ilmiah">
+          {HERO_PILLARS.map((pillar) => {
+            const IconComp = PILLAR_ICONS[pillar.id];
+            return (
+              <li key={pillar.id} className="hero-pillar">
+                <div className="hero-pillar__icon-box" aria-hidden="true">
+                  <IconComp size={20} />
+                </div>
+                <div className="hero-pillar__body">
+                  <h2 className="hero-pillar__title">{pillar.title}</h2>
                   <p className="hero-pillar__desc">{pillar.summary}</p>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       </div>
     </section>
   );

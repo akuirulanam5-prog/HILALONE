@@ -26,6 +26,7 @@ export function HeroVisualShowcase() {
           <span className="hero-visual__mode-label">
             {nightMode ? "NIGHT VISION RED" : "STANDARD DARK"}
           </span>
+          <span className="hero-visual__status-pill">Data Uji Sintetis</span>
         </div>
 
         <div className="theme-toggle-group" role="group" aria-label="Pratinjau tema antarmuka desktop">
@@ -54,7 +55,7 @@ export function HeroVisualShowcase() {
         <img
           src={shot1600}
           srcSet={`${shot800} 800w, ${shot1600} 1600w`}
-          sizes="(max-width: 900px) 100vw, 640px"
+          sizes="(max-width: 900px) 100vw, 680px"
           alt={
             nightMode
               ? "Tangkapan layar antarmuka desktop HILALONE dalam tema Night Vision Red memakai data uji sintetis"
@@ -68,7 +69,7 @@ export function HeroVisualShowcase() {
 
       <figcaption className="hero-visual__caption">
         <span>Antarmuka Desktop PySide6 (Windows)</span>
-        <span>Contoh hasil memakai data uji sintetis, bukan observasi nyata</span>
+        <span>Contoh pemrosesan memakai data uji sintetis, bukan observasi nyata</span>
       </figcaption>
     </figure>
   );
