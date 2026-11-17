@@ -26,20 +26,20 @@ export const siteConfig: SiteConfig = {
   fullTitle: "HILALONE — Automated Hilal Image Processing",
   tagline: "Scientific Astronomical Image Processing Software",
   philosophy: "Enhance the Signal, Never Invent the Signal.",
-  version: "1.1.0",
+  version: "1.1.1",
   mvpStage: "MVP 1.0",
   platform: "Windows Desktop (64-bit)",
 
   // Konfigurasi terpusat distribusi installer Windows.
   downloadAvailable: true,
   downloadUrl:
-    "https://github.com/akuirulanam5-prog/HILALONE/releases/download/v1.1.0/HILALONE_Setup_v1.1.0.exe",
-  installerFilename: "HILALONE_Setup_v1.1.0.exe",
-  fileSize: "91,4 MB (95.820.383 byte)",
+    "https://github.com/akuirulanam5-prog/HILALONE/releases/download/v1.1.1/HILALONE_Setup_v1.1.1.exe",
+  installerFilename: "HILALONE_Setup_v1.1.1.exe",
+  fileSize: "88,6 MB (92.887.501 byte)",
   supportedWindows: "Windows 10 (64-bit, teruji) · Target Windows 11 (64-bit, belum diuji langsung)",
   releaseDate: "17 November 2026",
-  sha256: "6e90f5c146d041bd20e9531570ab6687bd12393d368ceac9530004305f05f104",
-  releasePageUrl: "https://github.com/akuirulanam5-prog/HILALONE/releases/tag/v1.1.0",
+  sha256: "3611673df3eea1de7911b430395da0f99a89e680323ce24709c17236ce56f198",
+  releasePageUrl: "https://github.com/akuirulanam5-prog/HILALONE/releases/tag/v1.1.1",
 
   // Repositori GitHub publik (terverifikasi HTTP 200, private=false)
   githubUrl: "https://github.com/akuirulanam5-prog/HILALONE",
