@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from hilalone.core.logging.aligned_summary import (
+    format_aligned_row,
+    format_aligned_summary,
+    format_duration_seconds,
+)
 from hilalone.core.logging.file_handler import (
     DEFAULT_MAX_LOG_BYTES,
     PersistentLogFileHandler,
@@ -60,6 +65,17 @@ from hilalone.core.logging.scientific_reporters import (
     log_pipeline_execution_details,
     log_sequence_validation_report,
 )
+from hilalone.core.logging.workflow_timeline import (
+    OutputArtifactRecord,
+    SaveTransactionContext,
+    TimelineEvent,
+    TimelineEventType,
+    WorkflowIdleInterval,
+    WorkflowTimelineTracker,
+    format_utc_timestamp,
+    generate_report_id,
+    generate_transaction_id,
+)
 
 __all__ = [
     "ConsoleFilterCategory",
@@ -75,6 +91,7 @@ __all__ = [
     "LogSessionManager",
     "LogVerbosity",
     "NIGHT_VISION_RED_LOG_PALETTE",
+    "OutputArtifactRecord",
     "PersistentLogFileHandler",
     "ProcessingRunSummary",
     "ProcessingSessionRecord",
@@ -82,16 +99,27 @@ __all__ = [
     "PythonLoggingBridgeHandler",
     "QtLogSignalBridge",
     "STANDARD_DARK_LOG_PALETTE",
+    "SaveTransactionContext",
+    "TimelineEvent",
+    "TimelineEventType",
+    "WorkflowIdleInterval",
+    "WorkflowTimelineTracker",
     "filter_log_events",
+    "format_aligned_row",
+    "format_aligned_summary",
     "format_console_line",
     "format_details_kv",
     "format_duration",
+    "format_duration_seconds",
     "format_html_line",
     "format_jsonl_line",
     "format_persistent_line",
     "format_timestamps",
+    "format_utc_timestamp",
+    "generate_report_id",
     "generate_run_id",
     "generate_session_id",
+    "generate_transaction_id",
     "get_default_logs_root",
     "get_log_color",
     "get_logger",

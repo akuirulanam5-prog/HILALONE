@@ -1,7 +1,7 @@
 # HILALONE — Standar Sistem Pencatatan Ilmiah (`HILALONE_LOGGING_STANDARD.md`)
 
 **Aplikasi**: HILALONE — Automated Hilal Image Processing  
-**Versi**: 1.1.2  
+**Versi**: 1.1.3  
 **Paket Sumber**: `src/hilalone/core/logging/` & `src/hilalone/gui/console_panel.py`  
 **Prinsip Utama**: *"Enhance the Signal, Never Invent the Signal."*
 

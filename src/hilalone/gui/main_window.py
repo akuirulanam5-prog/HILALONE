@@ -1317,6 +1317,11 @@ class MainWindow(QMainWindow):
         self.histogram_window.raise_()
         self.histogram_window.activateWindow()
         dt = time.perf_counter() - t0
+        self.log_manager.timeline_tracker.record_user_action(
+            "HISTOGRAM_WINDOW_OPENED",
+            module="HISTOGRAM",
+            details={"target": title},
+        )
         self.log_manager.info(
             LogModule.HISTOGRAM,
             f"Histogram & Image Statistics opened for '{title}'.",
@@ -1346,6 +1351,11 @@ class MainWindow(QMainWindow):
         self.curves_window.raise_()
         self.curves_window.activateWindow()
         dt = time.perf_counter() - t0
+        self.log_manager.timeline_tracker.record_user_action(
+            "CURVE_WINDOW_OPENED",
+            module="CURVE",
+            details={"target": title},
+        )
         self.log_manager.info(
             LogModule.CURVE,
             f"Curve Transformation window opened for '{title}'.",
@@ -1411,6 +1421,11 @@ class MainWindow(QMainWindow):
         self._curve_applied_in_session = True
         self.statusBar().showMessage("Transformasi Kurva berhasil diterapkan pada citra.", 3000)
         dt_curv = time.perf_counter() - t0
+        self.log_manager.timeline_tracker.record_curve_processing_details(
+            channel=mode,
+            control_points=ctrl_points,
+            duration_ms=dt_curv * 1000.0,
+        )
         if self.log_manager.is_verbose_enabled:
             self.log_manager.verbose(
                 LogModule.CURVE,
@@ -1594,6 +1609,11 @@ class MainWindow(QMainWindow):
         self.info_dialog.raise_()
         self.info_dialog.activateWindow()
         dt = time.perf_counter() - t0
+        self.log_manager.timeline_tracker.record_user_action(
+            "INFORMATION_WINDOW_OPENED",
+            module="INPUT",
+            details={"filename": file_name, "card_count": len(cards)},
+        )
         self.log_manager.info(
             LogModule.INPUT,
             f"Image Information & Metadata Editor opened for '{file_name}'.",
@@ -2845,16 +2865,27 @@ class MainWindow(QMainWindow):
 
     def open_image_dialog(self) -> None:
         """Menampilkan dialog pemilih satu berkas lalu memuat gambar yang dipilih."""
+        self.log_manager.timeline_tracker.reset_for_new_source_session()
+        self.log_manager.timeline_tracker.record_user_action("OPEN_IMAGE_CLICKED", module="INPUT")
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Buka Satu Gambar (Single Image)", self._last_dir, self._file_dialog_filter()
         )
         if not file_path:
+            self.log_manager.timeline_tracker.record_user_action("FILE_DIALOG_CANCELLED", module="INPUT", action_result="CANCELLED")
             return
+        self.log_manager.timeline_tracker.record_user_action(
+            "FILE_SELECTION_COMPLETED",
+            module="INPUT",
+            details={"filename": Path(file_path).name},
+            is_operation_trigger=True,
+        )
         self._last_dir = str(Path(file_path).parent)
         self.load_path(file_path)
 
     def open_multiple_images_dialog(self) -> None:
         """Menampilkan dialog pemilih banyak berkas sekaligus."""
+        self.log_manager.timeline_tracker.reset_for_new_source_session()
+        self.log_manager.timeline_tracker.record_user_action("MULTIPLE_IMAGES_CLICKED", module="INPUT")
         file_paths, _ = QFileDialog.getOpenFileNames(
             self,
             "Pilih Beberapa Gambar (Multiple Images)",
@@ -2862,19 +2893,35 @@ class MainWindow(QMainWindow):
             self._file_dialog_filter(),
         )
         if not file_paths:
+            self.log_manager.timeline_tracker.record_user_action("FILE_DIALOG_CANCELLED", module="INPUT", action_result="CANCELLED")
             return
+        self.log_manager.timeline_tracker.record_user_action(
+            "FILE_SELECTION_COMPLETED",
+            module="INPUT",
+            details={"file_count": len(file_paths), "first_file": Path(file_paths[0]).name},
+            is_operation_trigger=True,
+        )
         self._last_dir = str(Path(file_paths[0]).parent)
         self.load_sequence_paths(file_paths)
 
     def open_folder_sequence_dialog(self) -> None:
         """Menampilkan dialog pemilih satu folder berisi urutan berkas gambar."""
+        self.log_manager.timeline_tracker.reset_for_new_source_session()
+        self.log_manager.timeline_tracker.record_user_action("OPEN_FOLDER_SEQUENCE_CLICKED", module="INPUT")
         folder = QFileDialog.getExistingDirectory(
             self,
             "Pilih Folder Sequence Gambar",
             self._last_dir,
         )
         if not folder:
+            self.log_manager.timeline_tracker.record_user_action("FILE_DIALOG_CANCELLED", module="INPUT", action_result="CANCELLED")
             return
+        self.log_manager.timeline_tracker.record_user_action(
+            "FILE_SELECTION_COMPLETED",
+            module="INPUT",
+            details={"folder": Path(folder).name},
+            is_operation_trigger=True,
+        )
         self._last_dir = folder
         self.load_folder_sequence(folder)
 
@@ -2885,6 +2932,8 @@ class MainWindow(QMainWindow):
 
     def open_video_dialog(self) -> None:
         """Menampilkan dialog pemilih berkas video (.MP4, .MOV, .AVI) lalu memuatnya."""
+        self.log_manager.timeline_tracker.reset_for_new_source_session()
+        self.log_manager.timeline_tracker.record_user_action("VIDEO_CLICKED", module="INPUT")
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Buka Berkas Video (.MP4, .MOV, .AVI)",
@@ -2892,7 +2941,14 @@ class MainWindow(QMainWindow):
             self._video_file_dialog_filter(),
         )
         if not file_path:
+            self.log_manager.timeline_tracker.record_user_action("FILE_DIALOG_CANCELLED", module="INPUT", action_result="CANCELLED")
             return
+        self.log_manager.timeline_tracker.record_user_action(
+            "FILE_SELECTION_COMPLETED",
+            module="INPUT",
+            details={"filename": Path(file_path).name},
+            is_operation_trigger=True,
+        )
         self._last_dir = str(Path(file_path).parent)
         self.load_video_path(file_path)
 
@@ -2904,9 +2960,27 @@ class MainWindow(QMainWindow):
         """Memuat berkas video ke dalam SequenceManager secara *lazy*."""
         t0 = time.perf_counter()
         p = Path(path)
+        if not self.log_manager.timeline_tracker.events or self.log_manager.timeline_tracker.events[-1].action not in ("FILE_SELECTION_COMPLETED", "VIDEO_CLICKED"):
+            self.log_manager.timeline_tracker.reset_for_new_source_session()
+            self.log_manager.timeline_tracker.record_user_action(
+                "VIDEO_CLICKED",
+                module="INPUT",
+                details={"filename": p.name},
+                is_operation_trigger=True,
+            )
+        self.log_manager.timeline_tracker.record_operation_started(
+            "INPUT_LOADING_STARTED",
+            module="INPUT",
+            details={"filename": p.name, "mode": "VIDEO"},
+        )
         try:
             report = self.sequence_manager.open_video_file(p)
         except ImageReadError as err:
+            self.log_manager.timeline_tracker.record_operation_failed(
+                "INPUT_LOADING_FAILED",
+                module="INPUT",
+                reason=str(err),
+            )
             self.log_manager.error(
                 LogModule.INPUT,
                 f"Failed to open video file '{p.name}'.",
@@ -2926,6 +3000,8 @@ class MainWindow(QMainWindow):
 
     def open_ser_dialog(self) -> None:
         """Menampilkan dialog pemilih berkas SER (.SER) lalu memuatnya."""
+        self.log_manager.timeline_tracker.reset_for_new_source_session()
+        self.log_manager.timeline_tracker.record_user_action("SER_CLICKED", module="INPUT")
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Buka Berkas Astronomi SER (.SER)",
@@ -2933,7 +3009,14 @@ class MainWindow(QMainWindow):
             self._ser_file_dialog_filter(),
         )
         if not file_path:
+            self.log_manager.timeline_tracker.record_user_action("FILE_DIALOG_CANCELLED", module="INPUT", action_result="CANCELLED")
             return
+        self.log_manager.timeline_tracker.record_user_action(
+            "FILE_SELECTION_COMPLETED",
+            module="INPUT",
+            details={"filename": Path(file_path).name},
+            is_operation_trigger=True,
+        )
         self._last_dir = str(Path(file_path).parent)
         self.load_ser_path(file_path)
 
@@ -2945,11 +3028,29 @@ class MainWindow(QMainWindow):
         """Memuat berkas SER ke dalam SequenceManager secara *lazy*."""
         t0 = time.perf_counter()
         p = Path(path)
+        if not self.log_manager.timeline_tracker.events or self.log_manager.timeline_tracker.events[-1].action not in ("FILE_SELECTION_COMPLETED", "SER_CLICKED"):
+            self.log_manager.timeline_tracker.reset_for_new_source_session()
+            self.log_manager.timeline_tracker.record_user_action(
+                "SER_CLICKED",
+                module="INPUT",
+                details={"filename": p.name},
+                is_operation_trigger=True,
+            )
+        self.log_manager.timeline_tracker.record_operation_started(
+            "INPUT_LOADING_STARTED",
+            module="INPUT",
+            details={"filename": p.name, "mode": "SER"},
+        )
         try:
             report = self.sequence_manager.open_ser_file(
                 p, endianness_policy=endianness_policy
             )
         except ImageReadError as err:
+            self.log_manager.timeline_tracker.record_operation_failed(
+                "INPUT_LOADING_FAILED",
+                module="INPUT",
+                reason=str(err),
+            )
             self.log_manager.error(
                 LogModule.INPUT,
                 f"Failed to open SER file '{p.name}'.",
@@ -3010,6 +3111,20 @@ class MainWindow(QMainWindow):
         """Memuat satu berkas gambar (Single Image; stacking_required = False)."""
         t0 = time.perf_counter()
         path = Path(path)
+        if page_index is None and hdu_index is None:
+            if not self.log_manager.timeline_tracker.events or self.log_manager.timeline_tracker.events[-1].action not in ("FILE_SELECTION_COMPLETED", "OPEN_IMAGE_CLICKED"):
+                self.log_manager.timeline_tracker.reset_for_new_source_session()
+                self.log_manager.timeline_tracker.record_user_action(
+                    "OPEN_IMAGE_CLICKED",
+                    module="INPUT",
+                    details={"filename": path.name},
+                    is_operation_trigger=True,
+                )
+            self.log_manager.timeline_tracker.record_operation_started(
+                "INPUT_LOADING_STARTED",
+                module="INPUT",
+                details={"filename": path.name, "mode": "SINGLE"},
+            )
         try:
             loaded = self.sequence_manager.open_single_file(
                 path, page_index=page_index, hdu_index=hdu_index
@@ -3027,6 +3142,11 @@ class MainWindow(QMainWindow):
                 return False
             return self.load_path(path, hdu_index=chosen_hdu)
         except ImageReadError as err:
+            self.log_manager.timeline_tracker.record_operation_failed(
+                "INPUT_LOADING_FAILED",
+                module="INPUT",
+                reason=str(err),
+            )
             self.log_manager.error(
                 LogModule.INPUT,
                 f"Failed to open image '{path.name}'.",
@@ -3091,9 +3211,27 @@ class MainWindow(QMainWindow):
         """Memuat seluruh gambar yang didukung dari sebuah folder."""
         t0 = time.perf_counter()
         folder = Path(folder_path)
+        if not self.log_manager.timeline_tracker.events or self.log_manager.timeline_tracker.events[-1].action not in ("FILE_SELECTION_COMPLETED", "OPEN_FOLDER_SEQUENCE_CLICKED"):
+            self.log_manager.timeline_tracker.reset_for_new_source_session()
+            self.log_manager.timeline_tracker.record_user_action(
+                "OPEN_FOLDER_SEQUENCE_CLICKED",
+                module="INPUT",
+                details={"folder": folder.name},
+                is_operation_trigger=True,
+            )
+        self.log_manager.timeline_tracker.record_operation_started(
+            "INPUT_LOADING_STARTED",
+            module="INPUT",
+            details={"folder": folder.name, "mode": "FOLDER_SEQUENCE"},
+        )
         try:
             report = self.sequence_manager.open_folder(folder, sort_by=sort_by)
         except ImageReadError as err:
+            self.log_manager.timeline_tracker.record_operation_failed(
+                "INPUT_LOADING_FAILED",
+                module="INPUT",
+                reason=str(err),
+            )
             self.log_manager.error(
                 LogModule.INPUT,
                 f"Failed to open folder sequence '{folder.name}'.",
@@ -3114,9 +3252,27 @@ class MainWindow(QMainWindow):
         """Memuat banyak berkas gambar sekaligus ke dalam SequenceManager."""
         t0 = time.perf_counter()
         raw_paths = [Path(p) for p in paths]
+        if not self.log_manager.timeline_tracker.events or self.log_manager.timeline_tracker.events[-1].action not in ("FILE_SELECTION_COMPLETED", "MULTIPLE_IMAGES_CLICKED"):
+            self.log_manager.timeline_tracker.reset_for_new_source_session()
+            self.log_manager.timeline_tracker.record_user_action(
+                "MULTIPLE_IMAGES_CLICKED",
+                module="INPUT",
+                details={"file_count": len(raw_paths)},
+                is_operation_trigger=True,
+            )
+        self.log_manager.timeline_tracker.record_operation_started(
+            "INPUT_LOADING_STARTED",
+            module="INPUT",
+            details={"file_count": len(raw_paths), "mode": "MULTIPLE_IMAGES"},
+        )
         try:
             report = self.sequence_manager.open_files(raw_paths, sort_by=sort_by)
         except ImageReadError as err:
+            self.log_manager.timeline_tracker.record_operation_failed(
+                "INPUT_LOADING_FAILED",
+                module="INPUT",
+                reason=str(err),
+            )
             self.log_manager.error(
                 LogModule.INPUT,
                 "Failed to open multiple images sequence.",
@@ -3880,6 +4036,11 @@ class MainWindow(QMainWindow):
         self._refresh_processing_controls()
 
     def _on_flat_checkbox_toggled(self, checked: bool) -> None:
+        self.log_manager.timeline_tracker.record_user_action(
+            "APPLY_FLAT_ENABLED" if checked else "APPLY_FLAT_DISABLED",
+            module="CALIBRATION",
+            details={"enabled": bool(checked)},
+        )
         is_running = self._is_stacking_running() or self._is_pipeline_running()
         self.flat_input_type_combo.setEnabled(checked and not is_running)
         self.select_flat_button.setEnabled(checked and not is_running)
@@ -3983,6 +4144,17 @@ class MainWindow(QMainWindow):
 
         t0 = time.perf_counter()
         p = Path(path)
+        self.log_manager.timeline_tracker.record_user_action(
+            "FLAT_FILE_SELECTED",
+            module="FLAT",
+            details={"filename": p.name},
+            is_operation_trigger=True,
+        )
+        self.log_manager.timeline_tracker.record_operation_started(
+            "MASTER_FLAT_GENERATION_STARTED",
+            module="FLAT",
+            details={"filename": p.name},
+        )
         try:
             loaded_flat = load_master_flat_auto(
                 p,
@@ -4438,6 +4610,14 @@ class MainWindow(QMainWindow):
         self._update_displayed_preview()
         self._update_processing_accordion_summary()
         if self.viewer.has_image():
+            self.log_manager.timeline_tracker.record_user_action(
+                "PREVIEW_MODE_CHANGED",
+                module="DISPLAY",
+                details={"preview_mode": self._preview_mode.value},
+            )
+            self.log_manager.timeline_tracker.record_display_generation_details(
+                display_mode=self._preview_mode.value,
+            )
             self.log_manager.info(
                 LogModule.DISPLAY,
                 f"Preview mode: {self._preview_mode.value}.",
@@ -4452,6 +4632,11 @@ class MainWindow(QMainWindow):
         self._update_displayed_preview()
         if self.viewer.has_image():
             view_state = "BEFORE (Original)" if checked else f"AFTER ({self._preview_mode.value})"
+            self.log_manager.timeline_tracker.record_user_action(
+                "BEFORE_AFTER_ENABLED",
+                module="DISPLAY",
+                details={"before_after": "BEFORE" if checked else "AFTER", "active_mode": self._preview_mode.value},
+            )
             self.log_manager.info(
                 LogModule.DISPLAY,
                 f"Before/After selection: {view_state}.",
@@ -5363,6 +5548,28 @@ class MainWindow(QMainWindow):
         self._active_pipeline_run_id = run_rec.run_id
         self._active_pipeline_user_excluded = len(excluded_unselected)
 
+        self.log_manager.timeline_tracker.update_user_configuration(
+            {
+                "profile": conf.profile.value,
+                "flat_enabled": bool(master_flat is not None),
+                "background_method": conf.background_config.method.value,
+                "clahe_enabled": conf.enhancement_config.enabled,
+                "clahe_clip_limit": conf.enhancement_config.clip_limit,
+                "stretch_method": conf.histogram_config.method.value,
+            }
+        )
+        self.log_manager.timeline_tracker.record_user_action(
+            "START_AUTOMATIC_PROCESSING_CLICKED",
+            module="SESSION",
+            details={"run_id": run_rec.run_id, "profile": conf.profile.value},
+            is_operation_trigger=True,
+        )
+        self.log_manager.timeline_tracker.record_operation_started(
+            "AUTOMATED_PROCESSING_STARTED",
+            module="SESSION",
+            details={"run_id": run_rec.run_id, "profile": conf.profile.value},
+        )
+
         self.log_manager.section("AUTOMATED PROCESSING PIPELINE", module=LogModule.SESSION, run_id=run_rec.run_id)
         self.log_manager.info(
             LogModule.SESSION,
@@ -5687,6 +5894,11 @@ class MainWindow(QMainWindow):
             filt = "FITS (*.fits);;TIFF (*.tif);;PNG (*.png)"
             save_kind = "LINEAR"
 
+        self.log_manager.timeline_tracker.begin_save_transaction(
+            run_id=self._active_pipeline_run_id or self.log_manager.current_run_id,
+            save_target=save_kind,
+        )
+        self.log_manager.timeline_tracker.mark_save_dialog_opened()
         out_path_str, _ = QFileDialog.getSaveFileName(
             self,
             "Simpan Hasil Pemrosesan Otomatis",
@@ -5694,7 +5906,14 @@ class MainWindow(QMainWindow):
             filt,
         )
         if not out_path_str:
+            self.log_manager.timeline_tracker.record_user_action(
+                "FILE_DIALOG_CANCELLED",
+                module="OUTPUT",
+                action_result="CANCELLED",
+            )
+            self.log_manager.timeline_tracker.finalize_save_transaction()
             return None
+        self.log_manager.timeline_tracker.mark_save_dialog_confirmed(out_path_str)
         return self.save_pipeline_result_to_path(out_path_str, save_target=save_kind)
 
     def save_pipeline_result_to_path(
@@ -5709,6 +5928,12 @@ class MainWindow(QMainWindow):
                 return self.save_stacking_result_to_path(output_path)
             self._show_error("Belum ada hasil pemrosesan untuk disimpan.")
             return None
+
+        if self.log_manager.timeline_tracker._active_save_tx is None:
+            self.log_manager.timeline_tracker.begin_save_transaction(
+                run_id=self._active_pipeline_run_id or self.log_manager.current_run_id,
+                save_target=save_target,
+            )
 
         source_paths: list[Path] = [e.source_path for e in self.sequence_manager.entries]
         if self._master_flat_path is not None:

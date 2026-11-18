@@ -38,6 +38,7 @@ from PySide6 import __version__ as PYSIDE_VERSION
 from PySide6.QtCore import QObject, Signal, qVersion
 
 from hilalone import APP_NAME, __version__
+from hilalone.core.logging.aligned_summary import format_aligned_summary
 from hilalone.core.logging.file_handler import (
     PersistentLogFileHandler,
     get_default_logs_root,
@@ -67,6 +68,7 @@ from hilalone.core.logging.log_session import (
     ProcessingSessionRecord,
     format_timestamps,
 )
+from hilalone.core.logging.workflow_timeline import WorkflowTimelineTracker
 
 
 class HilaloneLogger(QObject):
@@ -94,6 +96,7 @@ class HilaloneLogger(QObject):
         self._verbosity: LogVerbosity = verbosity
         self._source_directory: Path | None = None
         self._session_manager = LogSessionManager(session_id=session_id)
+        self._timeline_tracker = WorkflowTimelineTracker()
         self._progress_limiter = ProgressRateLimiter(min_step_percent=10)
         self._startup_logged: bool = False
 
@@ -148,6 +151,10 @@ class HilaloneLogger(QObject):
     @property
     def session_manager(self) -> LogSessionManager:
         return self._session_manager
+
+    @property
+    def timeline_tracker(self) -> WorkflowTimelineTracker:
+        return self._timeline_tracker
 
     @property
     def file_handler(self) -> PersistentLogFileHandler | None:
@@ -653,6 +660,34 @@ class HilaloneLogger(QObject):
             },
             event_type=LogEventType.SUMMARY,
             run_id=summary.run_id,
+            raw_block=block_text,
+        )
+
+    def log_aligned_summary_block(
+        self,
+        sections_or_items: list[tuple[str, Any]],
+        *,
+        title: str = "OUTPUT SAVE SUMMARY",
+        footer: str | None = None,
+        module: str | LogModule = LogModule.OUTPUT,
+        details: dict[str, Any] | None = None,
+        run_id: str | None = None,
+        min_verbosity: LogVerbosity = LogVerbosity.NORMAL,
+    ) -> LogEvent:
+        """Mencatat blok ringkasan tiga kolom sejajar (mis. Output Save Summary / Session Summary)."""
+        block_text = format_aligned_summary(
+            sections_or_items,
+            title=title,
+            footer=footer,
+        )
+        return self.log(
+            LogLevel.SECTION,
+            module,
+            title,
+            details=details,
+            event_type=LogEventType.SUMMARY,
+            run_id=run_id,
+            min_verbosity=min_verbosity,
             raw_block=block_text,
         )
 

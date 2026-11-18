@@ -1,6 +1,6 @@
 [project]
 name = "hilalone"
-version = "1.1.2"
+version = "1.1.3"
 description = "HILALONE - Automated Hilal Image Processing"
 requires-python = ">=3.10"
 

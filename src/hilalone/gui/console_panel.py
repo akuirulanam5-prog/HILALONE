@@ -446,16 +446,62 @@ class ConsoleLogPanel(QFrame):
         self._rebuild_view()
 
     # ------------------------------------------------------------------ Rendering & Scrolling
+    def _build_level_format(self, level: LogLevel, *, bold: bool | None = None) -> QTextCharFormat:
+        """Membuat format karakter berwarna semantik untuk level tertentu dan tema aktif."""
+        fmt = QTextCharFormat()
+        hex_color = get_log_color(level, night_vision=self._is_night_vision)
+        fmt.setForeground(QColor(hex_color))
+        use_bold = is_semibold_level(level) if bold is None else bold
+        fmt.setFontWeight(QFont.Weight.DemiBold if use_bold else QFont.Weight.Normal)
+        return fmt
+
     def _build_char_format(self, entry: LogEvent) -> QTextCharFormat:
         """Membuat format karakter berwarna semantik sesuai level pesan dan tema aktif."""
-        fmt = QTextCharFormat()
-        hex_color = get_log_color(entry.level, night_vision=self._is_night_vision)
-        fmt.setForeground(QColor(hex_color))
-        if is_semibold_level(entry.level):
-            fmt.setFontWeight(QFont.Weight.DemiBold)
-        else:
-            fmt.setFontWeight(QFont.Weight.Normal)
-        return fmt
+        return self._build_level_format(entry.level)
+
+    def _resolve_value_status_format(self, val_str: str) -> QTextCharFormat:
+        """Menentukan warna semantik khusus untuk nilai status pada baris ringkasan."""
+        upper = val_str.strip().upper()
+        if upper.startswith(("SUCCESS", "COMPLETED", "APPLIED", "SAVED", "VERIFIED")):
+            return self._build_level_format(LogLevel.SUCCESS, bold=True)
+        if upper.startswith(("SKIPPED", "NOT USED", "READY_TO_SAVE", "IN-MEMORY")):
+            return self._build_level_format(LogLevel.SKIPPED, bold=False)
+        if upper.startswith(("FAILED", "ERROR", "UNVERIFIED")):
+            return self._build_level_format(LogLevel.ERROR, bold=True)
+        if upper.startswith(("CANCELLED", "WARNING", "PARTIAL")):
+            return self._build_level_format(LogLevel.WARNING, bold=True)
+        return self._build_level_format(LogLevel.INFO, bold=False)
+
+    def _insert_entry_with_cursor(self, cursor: QTextCursor, entry: LogEvent) -> None:
+        """Menyisipkan satu LogEvent ke QTextCursor; untuk blok SUMMARY mewarnai hanya nilai status."""
+        line_text = format_console_line(entry)
+        if entry.raw_block is None:
+            cursor.insertText(line_text, self._build_char_format(entry))
+            return
+
+        fmt_section = self._build_level_format(LogLevel.SECTION, bold=True)
+        fmt_subhead = self._build_level_format(LogLevel.PROGRESS, bold=True)
+        fmt_info = self._build_level_format(LogLevel.INFO, bold=False)
+
+        block_lines = line_text.splitlines()
+        for idx, b_line in enumerate(block_lines):
+            if idx > 0:
+                cursor.insertBlock()
+            stripped = b_line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("=") or "SUMMARY" in stripped or "AUTOMATED PROCESSING" in stripped:
+                cursor.insertText(b_line, fmt_section)
+            elif stripped.startswith("-") or (stripped.isupper() and " : " not in b_line):
+                cursor.insertText(b_line, fmt_subhead)
+            elif " : " in b_line:
+                sep_pos = b_line.find(" : ")
+                prefix_part = b_line[: sep_pos + 3]
+                value_part = b_line[sep_pos + 3 :]
+                cursor.insertText(prefix_part, fmt_info)
+                cursor.insertText(value_part, self._resolve_value_status_format(value_part))
+            else:
+                cursor.insertText(b_line, fmt_info)
 
     def _append_entry_formatted(self, entry: LogEvent) -> None:
         """Menambahkan satu ``LogEvent`` ke ``text_edit`` dengan warna semantik dan kontrol scroll."""
@@ -468,9 +514,7 @@ class ConsoleLogPanel(QFrame):
         if not doc.isEmpty():
             cursor.insertBlock()
 
-        char_fmt = self._build_char_format(entry)
-        line_text = format_console_line(entry)
-        cursor.insertText(line_text, char_fmt)
+        self._insert_entry_with_cursor(cursor, entry)
 
         if self._auto_scroll and scrollbar is not None:
             scrollbar.setValue(scrollbar.maximum())
@@ -497,8 +541,7 @@ class ConsoleLogPanel(QFrame):
         for idx, entry in enumerate(matched):
             if idx > 0:
                 cursor.insertBlock()
-            char_fmt = self._build_char_format(entry)
-            cursor.insertText(format_console_line(entry), char_fmt)
+            self._insert_entry_with_cursor(cursor, entry)
 
         self._update_counter_label(len(matched))
 

@@ -26,11 +26,14 @@ Prinsip Data Ilmiah:
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import time
 from typing import Callable
 
 import numpy as np
 from PySide6.QtGui import QImage
+
+from hilalone.core.logging.log_session import format_timestamps
 
 from hilalone.input_manager.image_reader import ImageInfo, read_image
 from hilalone.input_manager.models import InputMode
@@ -110,7 +113,22 @@ class ProcessingPipelineOrchestrator:
         output_desc: str = "",
         duration_ms: float = 0.0,
         warnings: tuple[str, ...] = (),
+        started_at: str | None = None,
+        completed_at: str | None = None,
     ) -> StageExecutionRecord:
+        now_dt = datetime.now().astimezone()
+        _, now_iso = format_timestamps(now_dt)
+        if status == StageStatus.SKIPPED:
+            eff_start = None
+            eff_end = None
+        else:
+            eff_end = completed_at or now_iso
+            if started_at is not None:
+                eff_start = started_at
+            else:
+                start_dt = now_dt - timedelta(milliseconds=max(0.0, float(duration_ms)))
+                _, eff_start = format_timestamps(start_dt)
+
         rec = StageExecutionRecord(
             stage=stage,
             status=status,
@@ -120,6 +138,8 @@ class ProcessingPipelineOrchestrator:
             output_description=output_desc,
             duration_ms=duration_ms,
             warnings=warnings,
+            started_at=eff_start,
+            completed_at=eff_end,
         )
         self.stage_records.append(rec)
         return rec

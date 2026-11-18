@@ -24,6 +24,7 @@ import numpy as np
 
 from hilalone.core.logging.log_event import (
     LogModule,
+    LogVerbosity,
     ProcessingRunSummary,
     format_duration,
 )
@@ -301,6 +302,14 @@ def log_image_input_loaded(
             "duration_ms": round(duration_ms, 3),
         },
     )
+    if frame_count == 1:
+        logger.timeline_tracker.update_source_snapshot(single_info=info)
+    logger.timeline_tracker.record_operation_completed(
+        "INPUT_LOADING_COMPLETED",
+        module="INPUT",
+        duration_ms=duration_ms,
+        details={"filename": info.file_name, "frame_count": frame_count, "format": info.file_format},
+    )
 
 
 def log_sequence_validation_report(
@@ -406,6 +415,13 @@ def log_sequence_validation_report(
             "readiness": readiness,
             "duration_ms": round(duration_ms, 3),
         },
+    )
+    logger.timeline_tracker.update_source_snapshot(sequence_entries=entries)
+    logger.timeline_tracker.record_operation_completed(
+        "INPUT_VALIDATION_COMPLETED",
+        module="VALIDATION",
+        duration_ms=duration_ms,
+        details={"total_frames": total, "compatible_frames": compat, "incompatible_frames": incompat},
     )
 
 
@@ -533,6 +549,21 @@ def log_master_flat_prepared(
         "Master Flat generated and validated successfully.",
         format_duration(duration_ms=duration_ms),
         details={"duration_ms": round(duration_ms, 3)},
+    )
+    logger.timeline_tracker.record_master_flat_details(
+        aggregation_method=agg_method,
+        normalization_method=NORMALIZATION_FORMULA_TEXT,
+        input_flat_count=loaded_flat.frame_count,
+        output_dimensions=f"{loaded_flat.width}x{loaded_flat.height}",
+        data_type=str(loaded_flat.scientific_data.dtype),
+        invalid_pixels=0,
+        duration_ms=duration_ms,
+    )
+    logger.timeline_tracker.record_operation_completed(
+        "MASTER_FLAT_GENERATION_COMPLETED",
+        module="FLAT",
+        duration_ms=duration_ms,
+        details={"source": loaded_flat.source_description, "flat_frames": loaded_flat.frame_count},
     )
 
 
@@ -949,9 +980,37 @@ def log_pipeline_execution_details(
     hist_summary_status = "COMPLETED"
 
     # -------------------------------------------------------------------------
-    # 6. PROCESSING SUMMARY (Bagian XX)
+    # 6. PROCESSING SUMMARY (Bagian XX & Addendum Typography)
     # -------------------------------------------------------------------------
     total_sec = wall_elapsed_sec if wall_elapsed_sec is not None else result.total_elapsed_seconds
+    tracker = logger.timeline_tracker
+    tracker.record_operation_completed(
+        "AUTOMATED_PROCESSING_COMPLETED",
+        module="SESSION",
+        duration_ms=total_sec * 1000.0,
+        details={"run_id": run_id, "profile": result.profile.value},
+    )
+    with tracker._lock:
+        in_load_sec = (
+            tracker._input_loading_duration_ms / 1000.0
+            if tracker._input_loading_duration_ms is not None
+            else None
+        )
+        idle_sec = (
+            sum(idl.duration_ms for idl in tracker._idle_intervals) / 1000.0
+            if tracker._idle_intervals
+            else None
+        )
+        sess_start = tracker._session_start_timestamp
+
+    unique_src = list(dict.fromkeys(result.source_file_names))
+    if not unique_src:
+        files_summary = None
+    elif len(unique_src) == 1:
+        files_summary = unique_src[0]
+    else:
+        files_summary = f"{len(unique_src)} files ({unique_src[0]}, ...)"
+
     summary = ProcessingRunSummary(
         run_id=run_id,
         status="SUCCESS",
@@ -967,6 +1026,16 @@ def log_pipeline_execution_details(
         curve_status="APPLIED" if curve_applied else "NOT USED",
         output_files=output_files,
         processing_time_sec=total_sec,
+        session_id=logger.session_id,
+        input_mode=result.input_mode,
+        session_started=sess_start,
+        input_files_summary=files_summary,
+        compatible_frames=frames_processed,
+        incompatible_frames=frames_excluded,
+        master_flat_status="COMPLETED" if flat_summary_status == "APPLIED" else "SKIPPED",
+        save_status="SAVED" if output_files else "READY_TO_SAVE",
+        input_loading_sec=in_load_sec,
+        workflow_idle_sec=idle_sec,
     )
     logger.log_processing_summary(summary)
     return summary
@@ -1048,6 +1117,34 @@ def log_output_saved(
                 "duration_ms": round(duration_ms, 3),
             },
         )
+        if logger.is_verbose_enabled:
+            dtype_str = str(data_array.dtype) if data_array is not None else "float32"
+            save_sections = [
+                (
+                    "OUTPUT INFORMATION",
+                    [
+                        ("Output filename", saved_path.name),
+                        ("Output format", ext),
+                        ("Output location", str(saved_path.resolve())),
+                        ("Data type", dtype_str),
+                        ("File size", f"{file_size} B"),
+                        ("Companion report", json_report_path.name if (json_report_path and json_report_path.exists()) else "NONE"),
+                        ("Save status", "SAVED"),
+                    ],
+                ),
+                (
+                    "TIME SUMMARY",
+                    [
+                        ("Image write duration", f"{max(0.0, duration_ms / 1000.0):.2f} s"),
+                    ],
+                ),
+            ]
+            logger.log_aligned_summary_block(
+                save_sections,
+                title="OUTPUT SAVE SUMMARY",
+                module=LogModule.OUTPUT,
+                min_verbosity=LogVerbosity.VERBOSE,
+            )
     else:
         logger.error(
             LogModule.OUTPUT,

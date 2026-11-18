@@ -355,9 +355,17 @@ class LogEvent:
 LogEntry = LogEvent
 
 
+from hilalone.core.logging.aligned_summary import (
+    format_aligned_row,
+    format_aligned_summary,
+    format_duration_seconds,
+)
+
+
 @dataclass(frozen=True)
 class ProcessingRunSummary:
-    """Data terstruktur untuk mencetak blok PROCESSING SUMMARY di akhir pemrosesan otomatis."""
+    """Data terstruktur untuk mencetak blok PROCESSING SUMMARY di akhir pemrosesan otomatis
+    menggunakan tata letak tiga kolom sejajar (Addendum Typography & Alignment)."""
 
     run_id: str
     status: str  # "SUCCESS", "PARTIAL", "FAILED", "CANCELLED"
@@ -373,11 +381,30 @@ class ProcessingRunSummary:
     curve_status: str = "NOT USED"  # "APPLIED", "NOT USED"
     output_files: tuple[str, ...] = ()
     processing_time_sec: float = 0.0
+    # Informasi tambahan opsional untuk pengelompokan bagian (Addendum Section III)
+    session_id: str | None = None
+    input_mode: str | None = None
+    session_started: str | None = None
+    session_completed: str | None = None
+    input_files_summary: str | None = None
+    compatible_frames: int | None = None
+    incompatible_frames: int | None = None
+    master_flat_status: str | None = None
+    output_filename: str | None = None
+    output_format: str | None = None
+    output_location: str | None = None
+    output_dtype: str | None = None
+    save_status: str | None = None
+    input_loading_sec: float | None = None
+    workflow_idle_sec: float | None = None
+    save_dialog_sec: float | None = None
+    image_write_sec: float | None = None
+    end_to_end_sec: float | None = None
 
-    def format_summary_block(self) -> str:
-        """Memformat blok ringkasan eksekusi sesuai standar Bagian XX dengan format durasi seragam."""
+    def format_summary_block(self, *, label_width: int = 25, max_value_width: int | None = 68) -> str:
+        """Memformat blok ringkasan eksekusi dengan pengelompokan 5 bagian dan titik dua sejajar sempurna."""
         out_str = ", ".join(self.output_files) if self.output_files else "In-memory (Ready to Save)"
-        time_str = format_duration(duration_s=self.processing_time_sec)
+        proc_dur_str = format_duration_seconds(duration_s=self.processing_time_sec)
 
         if self.status == "CANCELLED":
             footer_title = "AUTOMATED PROCESSING CANCELLED"
@@ -386,26 +413,91 @@ class ProcessingRunSummary:
         else:
             footer_title = "AUTOMATED PROCESSING COMPLETED"
 
-        lines = [
-            "====================================================",
-            "              PROCESSING SUMMARY",
-            "====================================================",
-            f"Run ID              : {self.run_id}",
-            f"Status              : {self.status}",
-            f"Profile             : {self.profile}",
-            f"Input frames        : {self.input_frames}",
-            f"Frames processed    : {self.frames_processed}",
-            f"Frames excluded     : {self.frames_excluded}",
-            f"Flat Calibration    : {self.flat_calibration_status}",
-            f"Image Stacking      : {self.stacking_status}",
-            f"Background          : {self.background_status}",
-            f"Enhancement         : {self.enhancement_status}",
-            f"Histogram           : {self.histogram_status}",
-            f"Curve               : {self.curve_status}",
-            f"Output              : {out_str}",
-            f"Processing time     : {time_str}",
-            "====================================================",
-            f"       {footer_title}",
-            "====================================================",
+        # 1. SESSION INFORMATION
+        session_items: list[tuple[str, Any]] = [
+            ("Run ID", self.run_id),
         ]
-        return "\n".join(lines)
+        if self.session_id:
+            session_items.append(("Session ID", self.session_id))
+        session_items.extend([
+            ("Status", self.status),
+            ("Profile", self.profile),
+        ])
+        if self.input_mode:
+            session_items.append(("Input mode", self.input_mode))
+        if self.session_started:
+            session_items.append(("Session started", self.session_started))
+        if self.session_completed:
+            session_items.append(("Session completed", self.session_completed))
+
+        # 2. INPUT INFORMATION
+        input_items: list[tuple[str, Any]] = []
+        if self.input_files_summary:
+            input_items.append(("Input files", self.input_files_summary))
+        input_items.append(("Input frames", self.input_frames))
+        if self.compatible_frames is not None:
+            input_items.append(("Compatible frames", self.compatible_frames))
+        if self.incompatible_frames is not None:
+            input_items.append(("Incompatible frames", self.incompatible_frames))
+        input_items.extend([
+            ("Frames processed", self.frames_processed),
+            ("Frames excluded", self.frames_excluded),
+        ])
+
+        # 3. PROCESSING RESULTS
+        proc_items: list[tuple[str, Any]] = [
+            ("Flat Calibration", self.flat_calibration_status),
+        ]
+        if self.master_flat_status:
+            proc_items.append(("Master Flat", self.master_flat_status))
+        proc_items.extend([
+            ("Image Stacking", self.stacking_status),
+            ("Background Extraction", self.background_status),
+            ("Image Enhancement", self.enhancement_status),
+            ("Histogram Transformation", self.histogram_status),
+            ("Curve Processing", self.curve_status),
+        ])
+
+        # 4. OUTPUT INFORMATION
+        output_items: list[tuple[str, Any]] = []
+        if self.output_filename:
+            output_items.append(("Output filename", self.output_filename))
+        if self.output_format:
+            output_items.append(("Output format", self.output_format))
+        if self.output_location:
+            output_items.append(("Output location", self.output_location))
+        else:
+            output_items.append(("Output", out_str))
+        if self.output_dtype:
+            output_items.append(("Data type", self.output_dtype))
+        if self.save_status:
+            output_items.append(("Save status", self.save_status))
+
+        # 5. TIME SUMMARY
+        time_items: list[tuple[str, Any]] = []
+        if self.input_loading_sec is not None:
+            time_items.append(("Input loading duration", format_duration_seconds(duration_s=self.input_loading_sec)))
+        time_items.append(("Processing duration", proc_dur_str))
+        if self.workflow_idle_sec is not None:
+            time_items.append(("Workflow idle duration", format_duration_seconds(duration_s=self.workflow_idle_sec)))
+        if self.save_dialog_sec is not None:
+            time_items.append(("Save dialog duration", format_duration_seconds(duration_s=self.save_dialog_sec)))
+        if self.image_write_sec is not None:
+            time_items.append(("Image write duration", format_duration_seconds(duration_s=self.image_write_sec)))
+        if self.end_to_end_sec is not None:
+            time_items.append(("Total end-to-end duration", format_duration_seconds(duration_s=self.end_to_end_sec)))
+
+        sections: list[tuple[str, list[tuple[str, Any]]]] = [
+            ("SESSION INFORMATION", session_items),
+            ("INPUT INFORMATION", input_items),
+            ("PROCESSING RESULTS", proc_items),
+            ("OUTPUT INFORMATION", output_items),
+            ("TIME SUMMARY", time_items),
+        ]
+        return format_aligned_summary(
+            sections,
+            title="PROCESSING SUMMARY",
+            footer=footer_title,
+            label_width=label_width,
+            max_value_width=max_value_width,
+        )

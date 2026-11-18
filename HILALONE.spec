@@ -39,6 +39,8 @@ hiddenimports = [
     "skimage.exposure",
     "hilalone.core",
     "hilalone.core.logging",
+    "hilalone.core.logging.aligned_summary",
+    "hilalone.core.logging.workflow_timeline",
     "hilalone.updates",
 ]
 

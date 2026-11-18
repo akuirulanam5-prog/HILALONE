@@ -346,6 +346,8 @@ class StageExecutionRecord:
     output_description: str = ""
     duration_ms: float = 0.0
     warnings: tuple[str, ...] = ()
+    started_at: str | None = None
+    completed_at: str | None = None
 
 
 @dataclass(frozen=True)

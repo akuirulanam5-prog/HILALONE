@@ -95,11 +95,11 @@ class AboutDialog(QDialog):
 
         self.whats_new_title_label = QLabel(f"Apa yang Baru di v{__version__}")
         self.whats_new_body_label = QLabel(
-            "• Scientific Processing Log & Console System terpusat (Run ID, Session ID, .log & .jsonl).\n"
-            "• Mode Detail bertingkat nyata: Normal, Verbose (metadata & rumus ilmiah), dan Debug (diagnostik).\n"
-            "• Standardisasi seluruh durasi ke format 'Duration: 0.00 s' & perbaikan tombol Auto-scroll.\n"
-            "• Export Visible & Export Complete Log otomatis mengarah ke folder sumber citra aktif.\n"
-            "• Sistem Pembaruan Otomatis (GitHub Releases + verifikasi SHA-256) & aset branding resmi baru."
+            "• Scientific Processing Timeline & Report Schema v2.0 (*_processing_report.json) dengan rekam jejak kronologis dari Open Image hingga foto tersimpan.\n"
+            "• Pencatatan User Interaction Timeline, Workflow Idle Interval, Save Transaction (durasi dialog vs tulis disk), serta deduplikasi sumber Video/SER.\n"
+            "• Tipografi Ringkasan Tiga Kolom Sejajar (format_aligned_summary): tanda titik dua (:) sejajar vertikal di 5 bagian utama & line-wrapping rapi.\n"
+            "• Console Log Ilmiah dengan mode Detail Normal/Verbose/Debug, format durasi '0.00 s', & ekspor otomatis ke folder sumber citra.\n"
+            "• Sistem Pembaruan Otomatis (GitHub Releases + verifikasi SHA-256) & aset branding resmi."
         )
         self.whats_new_body_label.setWordWrap(True)
         whats_new_layout.addWidget(self.whats_new_title_label)

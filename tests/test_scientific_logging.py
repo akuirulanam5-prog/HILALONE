@@ -826,7 +826,8 @@ class TestConsoleLogRefinements:
             processing_time_sec=1.207,
         )
         summary_block = summary.format_summary_block()
-        assert "Duration: 1.21 s" in summary_block
+        assert "Processing duration" in summary_block
+        assert "1.21 s" in summary_block
         assert "ms" not in summary_block
 
     def test_refinement_3_detail_modes_normal_verbose_debug_distinct_outputs(
