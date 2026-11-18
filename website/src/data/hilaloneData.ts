@@ -95,7 +95,7 @@ export interface FaqItem {
 export const HERO_HIGHLIGHTS = [
   { label: "Presisi Internal", value: "float32 Linear" },
   { label: "Profil Otomatis", value: "Basic · Medium · High" },
-  { label: "Unit Test Pytest", value: "271 Passed" },
+  { label: "Unit Test Pytest", value: "278 Passed" },
   { label: "Geometri Stacking", value: "Tanpa Warping / Align" },
 ] as const;
 
@@ -314,11 +314,11 @@ export const FEATURES: readonly FeatureItem[] = [
   },
   {
     id: "scientific-export",
-    name: "Scientific & Visual Export",
+    name: "Scientific Export & Report v2.0",
     category: "Analisis, Log & Ekspor",
     iconName: "FileOutput",
-    description: "Menyimpan master linear (.fits/.tif float32 dengan header riwayat) secara terpisah dari hasil visual (.png) dan Quick Snapshot.",
-    benefit: "Melindungi keaslian data ilmiah dengan aturan anti-overwrite berkas sumber.",
+    description: "Menyimpan master linear (.fits/.tif float32) terpisah dari hasil visual (.png) disertai Scientific Processing Report Schema v2.0 (*_processing_report.json) yang merekam timeline interaksi, idle interval, dan transaksi penyimpanan.",
+    benefit: "Melindungi keaslian data ilmiah dengan rekam jejak penelitian lengkap dari Open Image hingga foto tersimpan.",
     status: "TERUJI",
   },
   {
@@ -562,7 +562,7 @@ export const ROADMAP_STAGES: readonly RoadmapStage[] = [
     items: [
       { label: "Reader FITS, TIFF, Video (MP4/MOV/AVI), SER, PNG/JPEG & Pipeline", badge: "Teruji" },
       { label: "RAW Kamera Reader (LibRaw / rawpy)", badge: "Parsial (belum uji RAW kamera asli)" },
-      { label: `PyInstaller ONE-DIR & Desktop Auto-Updater (v${siteConfig.version})`, badge: "271 Passed" },
+      { label: `PyInstaller ONE-DIR & Desktop Auto-Updater (v${siteConfig.version})`, badge: "278 Passed" },
       { label: `Installer Windows (${siteConfig.installerFilename})`, badge: `Tersedia (v${siteConfig.version})` },
     ],
   },
